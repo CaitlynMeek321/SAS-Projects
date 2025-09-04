@@ -1,0 +1,1487 @@
+/*****************************************************************************/
+/* Start a session named mySession using the existing CAS server connection */
+/* while allowing override of caslib, timeout (in seconds), and locale */
+/* defaults. */
+/*****************************************************************************/
+cas mySession sessopts=(caslib=casuser timeout=1800 locale="en_US");
+
+/*****************************************************************************/
+/* Create a default CAS session and create SAS librefs for existing caslibs */
+/* so that they are visible in the SAS Studio Libraries tree. */
+/*****************************************************************************/
+cas;
+caslib _all_ assign;
+
+/********************************************************************************/
+/********************************************************************************/
+
+/*******************************************************************************************************/
+/* FILE PREP:
+	a. Make sure "zip" is formatted as "text" in the Excel spreadsheet
+	b. Change the zip code that says 'A  78521000' to '78521' and make sure it's formatted as text too
+	c. Make sure the sheet is labeled "Texas_cumulative" */
+/********************************************************************************************************/
+
+/*****************************************************/
+/*Import CDC TX Cumulative File - CDC Sequencing data*/
+/*****************************************************/
+
+*set libname;
+libname TX_Cumul '/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data';
+run;
+
+*import CDC cumulative sequencing data
+N = 129,412;
+PROC IMPORT OUT= TX_Cumul.TXCumulative /*update filepath below*/
+            DATAFILE= "/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data/Texas_cumulative.xlsx" 
+            DBMS=XLSX REPLACE;
+     GETNAMES=YES;
+     /*MIXED=NO;
+     SCANTEXT=YES;
+     USEDATE=YES;
+     SCANTIME=YES;
+	 SHEET=Texas_cumulative;*/
+RUN;
+
+/*1. Check vendor_ascession, original_PANGO_lineage, lineage_pango_lineage to ensure no frameshift has occurred in 
+		HL7 Platform. Look for unusual values. In the past, Pango lineages (i.e. B.1.1.7) have been found in the 
+		vendor accession column, and specimen source values have been found in the original_PANGO_lineage column. 
+		Correct frame shifts by copying and pasting data into correct columns in the Excel spreadsheet 
+		if a frame shift has occurred. If any changes were made, rerun SAS code from the beginning.*/
+
+/*proc freq data= TX_Cumul.TXCumulative;
+tables vendor_accession original_PANGO_lineage lineage_pango_lineage; 
+run;*/
+
+/**********************************************/
+/*Check State and delete all non-Texas records*/
+/**********************************************/
+
+proc freq data= TX_Cumul.TXCumulative;
+tables state; 
+run;
+data TXonly;
+set TX_Cumul.TXCumulative; 
+if state NE "Texas" then delete;
+run;
+
+/**********************************/
+/*Clean race and ethnicity columns*/
+/**********************************/
+
+*Replace each “{“ and “}” with a blank (no space);
+data TX1;
+set TXonly;
+race1 = COMPRESS(race, '{}', 'i');
+eth1 = COMPRESS(ethnicity, '{}', 'i');
+drop race ethnicity;
+run;
+data TX2;
+set TX1;
+rename race1 = race;
+rename eth1 = ethnicity;
+run;
+
+proc freq data=TX2;
+tables race ethnicity; 
+run;
+*collapse race & ethnicity categories;
+*may need to update if new race categories pop up;
+data TX3;
+	set TX2;
+	length race1 $ 9;
+
+	if race IN('"Black or African American"', 'AFR', 'B', 'BLACK', 'BLACK OR AFR AM', 'BLACK OR AFRICAN AMERICAN', 
+				'Black or African American', 'Black') then race1='Black';
+
+	else if race IN('""', '"Prefer not to share"', '-', 'A', 'DECLINE TO IDENTIFY', 'DECLINE_TO_IDENTIFY', 'DTA', 
+					'DTA_OTH', 'EMD', 'Not Provided', 'Not sure', 'Prefer not to Answer', 'Prefer not to answer', 
+					'SAS', 'UNK', 'UNKNOWN', 'Unknown', 'ng', 'unknown','//','X') then race1='Unknown';
+
+	else if race IN('"""American Indian or Alaska Native"""', '"American Indian or Alaska Native"', 'AM IND ALSK NTV','AMERICAN INDIAN OR ALASKAN NATIVE', 
+					'AMR', 'American Indian and Alaska Native; Two or more races', 'American Indian or Alaska Native', 
+					'American Indian/Alaskan Native', 'Asian White', '"Black or African American" White', 
+					'HAWAII PAC ISL', 'MIX', 'Multi-racial', 'Multi-racial White', 'NAI', 'NAM', 
+					'Native HI or Other Pacific Isl', 'Native Hawaiian or Other Pacific Islander', 'O', 'OTH', 'OTHER',
+					'OTHER RACE', 'Other', 'Other Race', 'White Other', 'I','OTH','Other/Not Reported','Other/Not reported','Native Hawaiian or Pacific Islander') then race1='Other';
+
+	else if race IN('ASIAN', 'ASN', 'Asian') then race1='Asian';
+
+	else if race IN('CAU', 'Caucasian', 'W', 'WHI', 'WHITE', 'White') then race1='White';
+
+	else if race IN('HISPANIC OR LATINO', 'Hispanic or Latino') then race1='Hispanic';
+run;
+data TX4;
+	set TX3;
+	length eth1 $ 15;
+
+	if ethnicity IN('DECLINE_TO_IDENTIFY', 'DECLINE TO IDENTIFY', 'DTA', '-', 'Prefer not to Answer', 
+				'Prefer not to answer', 'UNKNOWN', 'Unknown', 'unknown', 'ng', 'NG]', 'OTH', '//','Other/Not Reported') then eth1 = 'Unknown';
+
+	else if ethnicity IN('AMR', 'NAM', 'NON HISPANIC OR LATINO', 'NON-HISPANIC', 'NON_HISPANIC_OR_LATINO',
+					'Non-Hispanic', 'Not Hispanic', 'Not Hispanic or Latino', 'NON_HISP') then eth1 = 'Non-Hispanic';
+
+	else if ethnicity IN('HISPANIC', 'HISPANIC OR LATINO', 'Hispanic', 'Hispanic or Latino') then eth1 = 'Hispanic';
+
+	else if ethnicity=:'1' then eth1='Unknown';
+	else if ethnicity=:'2' then eth1='Unknown';
+	else if ethnicity=:'3' then eth1='Unknown';
+	else if ethnicity=:'4' then eth1='Unknown';
+	else if ethnicity=:'5' then eth1='Unknown';
+	else if ethnicity=:'6' then eth1='Unknown';
+	else if ethnicity=:'7' then eth1='Unknown';
+	else if ethnicity=:'8' then eth1='Unknown';
+	else if ethnicity=:'9' then eth1='Unknown';
+
+	else eth1=ethnicity;
+run;
+*rename variables;
+data TX5;
+set TX4;
+drop race ethnicity;
+rename race1 = race;
+rename eth1 = ethnicity;
+run;
+*make sure race & ethnicity variables were properly cleaned;
+proc freq data=TX5;
+	tables race ethnicity;
+run;
+
+/*****************/
+/*Clean zip codes*/
+/*****************/
+
+/*Change ZIP codes to be 5-digits*/
+ 
+*ZIP code range in Texas is 73301-88595;
+*remove last 4 digits & hyphens of zipcodes longer than 5 digits;
+data TX6;
+set TX5;
+length zipchar $ 5;
+zipchar = left(zip);
+drop zip;
+run;
+data TX7;
+set TX6;
+rename zipchar = zip;
+run;
+
+*remove all unknown, missing zipcodes;
+data TX8;
+	set TX7;
+	IF zip IN('UNKNOWN000', 'Unknown', '.') THEN DELETE;
+run;
+*remove zipcodes less than 5 digits;
+data TX9;
+	set TX8;
+	if LENGTHN(zip) ~=5 then delete;
+	else if zip IN('UNKNO','Unkno') then delete; 
+run;
+
+/*Remove non-Texas zip codes*/
+
+*create a new state variable that looks up the state based on the zip code given in the dataset;
+data TX10;
+	set TX9;
+	state1 = ZIPSTATE(zip);
+	drop state;
+run;
+*remove non-TX observations;
+data TX11;
+	set TX10;
+	if state1 NE 'TX' then delete;
+	rename state1=state;
+run;
+*make sure zip codes were cleaned properly;
+proc freq data=TX11;
+tables state*zip/list;
+run;
+
+/*create end of week variable*/
+/*data TX12;
+	set TX11;
+	collect_weekly=intnx('week1',collection_date,0,'end');
+run;*/
+
+/****************/
+/*reformat dates*/
+/****************/
+
+data TX_CDC_Cleaned;
+	set TX11;
+	format collection_date      mmddyy10.
+		   receive_date         mmddyy10.
+		   date_received_by_CDC mmddyy10.
+		   pango_class_date     mmddyy10.;
+run;
+
+/*********************************************************************************************/
+
+/*data TX_CDC_Cleaned;
+	set TX_CDC_Cleaned1;
+	if '12JUN2022'd <= collection_date <= '12JUL2022'd then do;
+		if vendor in('Helix', 'Helix/Illumina', 'Laboratory Corporation of America') 
+			AND lineage_pango_lineage = 'NA' then lineage_pango_lineage = original_pango_lineage;
+	end;
+run;
+proc freq data=TX_CDC_Cleaned1;
+	tables lineage_pango_lineage;
+	where '12JUN2022'd <= collection_date <= '12JUL2022'd;
+run;
+proc freq data=TX_CDC_Cleaned;
+	tables lineage_pango_lineage;
+	where '12JUN2022'd <= collection_date <= '20JUL2022'd;
+run;*/
+
+/********************************************************************************************************/
+
+/***************************************************************************************************/
+/*create permanent dataset of cleaned CDC data (to be later combined w/ DSHS Austin lab NGS results*/
+/***************************************************************************************************/
+
+data TX_Cumul.TX_CDC_Cleaned;
+	set TX_CDC_Cleaned;
+run;
+
+/***********************************************************************************************************************/
+
+/*****************************************/
+/*merge geographic/jurisdiction variables*/
+/*Upload Jurisdictions_TSAs.xlsx from S:\infect\Coronavirus Epidemiology Team\Training and SOPs\Special Cases Team Variant Reporting and Variant Sequencing\Variant Sequencing SOPs and Videos*/
+/*****************************************/ 
+
+*import zipcode lookup sheet;
+proc import out = juris_zip 
+datafile= "/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Jurisdictions_TSAs.xlsx"  
+dbms=xlsx 
+replace;
+sheet = Sheet1; 
+DATAROW=2; 
+getnames=yes;
+run;
+*convert zip code in jurisdiction sheet to character/string and have matching length in order to left join;
+data juris_zip1;
+	set juris_zip;
+	zipchar = PUT(ZipCode, 5.);
+	drop ZipCode;
+	rename zipchar = ZipCode;
+run;
+*Merge jurisdiction table with CDC data (left join);
+proc sql;
+create table combined as
+select a.*,b.City, b.County, b.PHRJ, b.Jurisdict, b.TSA
+from TX_Cumul.TX_CDC_Cleaned as a
+left join juris_zip1 as b
+on a.zip=b.ZipCode;
+quit;
+
+*check for any missing jurisdictions (they are missing due to invalid zip codes);
+*6 have incorrect, non-TX, non-USA zip codes;
+proc print data=combined;
+where Jurisdict=' ';
+run;
+*remove those incorrect zip codes since CDC data has no address information to validate;
+data combined1;
+	set combined;
+	if Jurisdict=' ' then delete;
+run;
+
+*remove any duplicates that were created from the SQL join
+ n = 129,048;
+proc sort data=combined1 nodupkey;
+by vendor_accession;
+run;
+
+/************************************/
+/*create permanent dataset to export*/
+/************************************/
+
+data TX_Cumul.TXCumulativeCleaned;
+	set combined1;
+run;
+
+/********************************************/
+/*Export cleaned data set into an Excel file*/
+/********************************************/
+
+******** before saving in the S:Drive make sure you save a copy of last week's CDC NGS file (with last week's date) in the archive
+			               (see SOP for more detailed instructions)********; 
+
+proc export data= TX_Cumul.TXCumulativeCleaned
+    outfile="/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data/CDC NGS Texas Cumulative File.xlsx"
+    dbms=xlsx replace;
+	sheet= "CDC NGS Texas Cumulative File_G";
+run;
+NEDSS Code
+/*****************************************************************************/
+/* Start a session named mySession using the existing CAS server connection */
+/* while allowing override of caslib, timeout (in seconds), and locale */
+/* defaults. */
+/*****************************************************************************/
+cas mySession sessopts=(caslib=casuser timeout=1800 locale="en_US");
+
+/*****************************************************************************/
+/* Create a default CAS session and create SAS librefs for existing caslibs */
+/* so that they are visible in the SAS Studio Libraries tree. */
+/*****************************************************************************/
+cas;
+caslib _all_ assign;
+
+/********************************************************************************/
+/********************************************************************************/
+
+/*******************************************************************************************************************/
+*DATA PREP:
+	1. Format specimen_coll_dt, lab_report_dt, lab_added_dt, event_dt, and pat_DOB as DATE format in Excel
+	2. Format testing_lab_accession_number, specimen_ID, result_desc, & text_result_desc as TEXT format in Excel*/
+/*******************************************************************************************************************/
+
+/*********************************/
+/*import NEDSS sequencing dataset*/
+/*********************************/
+
+****CHANGE FILEPATH accordingly (whether for dashboard or data request);
+LIBNAME DSHS "/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data";
+run;
+PROC IMPORT OUT= DSHS.DSHS_Austin_Sequencing
+            DATAFILE= "/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data/NEDSS_WGS.xlsx"            
+	 DBMS=XLSX REPLACE;
+     GETNAMES=YES;
+     /*MIXED=NO;
+     SCANTEXT=YES;
+     USEDATE=YES;
+     SCANTIME=YES;*/
+RUN;
+*delete blank rows imported;
+OPTIONS missing = ' ';
+data DSHS_Austin1;
+    SET DSHS.DSHS_Austin_Sequencing;
+    IF missing(CATS(of _all_)) THEN DELETE;
+run;
+
+
+/********************************************/
+/*Substitute missing sample collection dates*/
+/********************************************/
+
+*check to see if there are missing collection dates that also have missing lab report dates;
+*15 missing collection & lab report date;
+*if there are any missing collection & lab report dates, see if there are other dates in the dataset
+that you substitute for these;
+proc print data=DSHS_Austin1;
+	where specimen_coll_dt = . AND lab_report_dt= . ;
+run;
+
+/*replace missing collection dates with receive dates, and others if needed (MODIFY code if needed)*/
+
+data DSHS_Austin2;
+	set DSHS_Austin1;
+	if specimen_coll_dt = . then do;
+		if lab_report_dt = . then coll_dt=event_dt;
+		else coll_dt=lab_report_dt;
+	end;
+	else coll_dt=specimen_coll_dt; 
+	format coll_dt date9.;
+	drop specimen_coll_dt;
+run;
+
+/********************************************************************************/
+/*subset data to only DSHS Austin Laboratory results for public-facing dashboard*/
+/*04/01/25 Testing adding VNP partners, 515,155 All,*/
+/********************************************************************************/
+data DSHS_TX;
+	set DSHS_Austin2;
+run;
+PROC FREQ DATA= DSHS_Austin2; 
+TABLE reporting_facility_name ; 
+RUN; 
+/*******************/
+/*delete non-TX obs*/
+/*******************/
+
+*rename state variable to match CDC data;
+data DSHS_TXonly;
+set DSHS_TX; 
+state = PAT_STATE;
+if state NE "TX" then delete;
+drop PAT_STATE;
+run;
+
+/**********************************/
+/*clean race & ethnicity variables*/
+/**********************************/
+
+*check to see if there any new categories popped up that need to be updated into the cleaning below;
+proc freq data = DSHS_TXonly;
+tables pat_race_calc pat_ethnicity;
+run;
+*clean and rename race variable to stay consistent with CDC data;
+data DSHS_TX1;
+	set DSHS_TXonly;
+	length race $ 9;
+	if pat_race_calc='Asian' then race='Asian';
+	else if pat_race_calc='Black or African American' then race='Black';
+	else if pat_race_calc='White' then race='White';
+	else if pat_race_calc IN('American Indian or Alaska Native', 'Other Race', 'Other Race; unknown','Native Hawaiian or Other Pacific Islander',
+								'White; Other Race', 'White; unknown','White; Other Race; unknown', 'Black or African American; Other Race','Black or African American; White',
+								'Asian; Other Race','Asian; Black or African American','Asian; White') then race='Other';
+	else if pat_race_calc IN('unknown', ' ','D') then race='Unknown';
+	drop pat_race_calc;
+run;
+*clean and rename ethnicity variable to stay consistent with CDC data;
+data DSHS_TX2;
+	set DSHS_TX1;
+	length ethnicity $ 15;
+	if pat_ethnicity='2186-5' then ethnicity='Non-Hispanic';
+	else if pat_ethnicity='2135-2' then ethnicity='Hispanic';
+	else if pat_ethnicity IN('UNK', ' ','D') then ethnicity='Unknown';
+	drop pat_ethnicity;
+run;
+*make sure race & ethnicity variables were cleaned properly;
+proc freq data = DSHS_TX2;
+tables race ethnicity;
+run;
+
+/*****************/
+/*clean zip codes*/
+/*****************/
+
+*remove last 4 digits & hyphens of zipcodes longer than 5 digits;
+data DSHS_TX3;
+set DSHS_TX2;
+length zipchar $ 5;
+zipchar = left(PAT_ZIP_CODE);
+drop PAT_ZIP_CODE;
+run;
+data DSHS_TX4;
+set DSHS_TX3;
+rename zipchar = zip;
+run;
+*remove all unknown, missing zipcodes;
+data DSHS_TX5;
+	set DSHS_TX4;
+	IF zip IN('.') THEN DELETE;
+run;
+*remove zipcodes less than 5 digits;
+data DSHS_TX6;
+	set DSHS_TX5;
+	if LENGTHN(zip) ~=5 then delete;
+run;
+
+/*remove non-TX zip codes*/
+
+*create a new state variable that looks up the state based on the zip code given in the dataset;
+data DSHS_TX7;
+	set DSHS_TX6;
+	state1 = ZIPSTATE(zip);
+	drop state;
+run;
+*remove non-TX observations;
+data DSHS_TX8;
+	set DSHS_TX7;
+	state=state1;
+	if state NE 'TX' then delete;
+	drop state1;
+run;
+*make sure zip codes were cleaned properly;
+proc freq data=DSHS_TX8;
+tables state*zip/list;
+run;
+
+/**********************/
+/*clean PANGO lineages*/
+/**********************/
+
+data DSHS_TX9;
+	set DSHS_TX8;
+	if text_result_desc = ' ' then lineage = result_desc;
+	else lineage = text_result_desc;
+run;
+*Find hCoV lineages cases and who sent them to correct the issue;
+PROC CONTENTS DATA= DSHS_TX9 ;
+RUN; 
+
+PROC FREQ DATA= DSHS_TX9 ;
+	TABLES REPORTING_FACILITY_NAME TESTING_LAB_ACCESSION_NUMBER ; 
+	WHERE lineage contains 'hCoV-19/USA/TX';
+RUN; 
+
+*clean out GISAID and vendor accession IDs from pango lineage column;
+data DSHS_TX10;
+set DSHS_TX9;
+if lineage=:"EPI_ISL"
+then GISAID_ACCESSION=lineage; 
+if find(lineage, "hCoV-19/USA/TX") then DELETE ;
+if find(lineage, "L-") then DELETE ;
+if find(lineage, "V22-") then DELETE ;
+run;
+
+data DSHS_TX11;
+set DSHS_TX10;
+if lineage=:"20C" then NEDSS_Accession=lineage;
+else if lineage=:"20V" then NEDSS_Accession=lineage; 
+else if lineage=:"21C" then NEDSS_Accession=lineage;
+else if lineage=:"21V" then NEDSS_Accession=lineage;
+else if lineage=:"22C" then NEDSS_Accession=lineage;
+else if lineage=:"22V" then NEDSS_Accession=lineage;
+else if lineage=:"23C" then NEDSS_Accession=lineage;
+else if lineage=:"23V" then NEDSS_Accession=lineage;
+else if lineage=:"ATM" then NEDSS_Accession=lineage; 
+else if lineage=:"FG" then NEDSS_Accession=lineage; 
+else if lineage=:"LC" then NEDSS_Accession=lineage; 
+else if lineage=:"MCoV" then NEDSS_Accession=lineage; 
+else if lineage=:"STM" then NEDSS_Accession=lineage;
+else if lineage=:"SPID" then NEDSS_Accession=lineage;
+else if lineage=:"CS" then NEDSS_Accession=lineage;
+run;
+data DSHS_TX12;
+set DSHS_TX11;
+if lineage=:"EPI_ISL" then lineage=" ";
+else if lineage=:"20C" then lineage=" ";
+else if lineage=:"20V" then lineage=" ";
+else if lineage=:"21C" then lineage=" ";
+else if lineage=:"21V" then lineage=" ";
+else if lineage=:"22C" then lineage=" ";
+else if lineage=:"22V" then lineage=" ";
+else if lineage=:"23C" then lineage=" ";
+else if lineage=:"23V" then lineage=" ";
+else if lineage=:"ATM" then lineage=" "; 
+else if lineage=:"FG" then lineage=" "; 
+else if lineage=:"LC" then lineage=" "; 
+else if lineage=:"MCoV" then lineage=" "; 
+else if lineage=:"STM" then lineage=" ";
+else if lineage=:"SPID" then lineage=" ";
+else if lineage=:"CS" then lineage=" ";
+run;
+proc freq data=DSHS_TX12; 
+	tables lineage; 
+run;
+*clean pango lineages themselves;	
+data DSHS_TX13;
+	set DSHS_TX12;
+	lineage1 = compress(lineage,"()");
+	length word $82.;
+	do word = 'SARS-CoV-2', 'SARS-COV-2', 'SARS-COV-2','hCoV-19/USA/TX-ASC-', 'lineage', 'Lineage','LINEAGE','Likely','Variant', 'Delta', 'Delta Variant', '(probable)', '-', 'USA', 'USA Variant','Variant', 'Omicron', 'variant',
+              'Severe', 'acute', 'respiratory', 'syndrome', 'coronavirus', '2','organism', '(organism)', 'VARIANT', 'ALPHA','subvariant',
+     		  '-ALPHA', '=', 'Variant Identified','IDENTIFIED','Identified', 'probable','(marker override: BA.2.12 + Spike_L452Q => BA.2.12.1)', 'marker override: BA.2.12 + Spike_L452Q => BA.2.12.1',
+              'marker override: BA.2.12 + Spike_L452Q => BA.2.', 'marker override: BA.2.12 + Spike_L452Q => B',' marker override: BA.2.12 + Spike_L452Q =>';
+		lineage1 = tranwrd(' '||lineage1, ' '||strip(word)||' ', ' ');
+	end;
+	lineage1 = compbl(lineage1);
+	lineage2 = STRIP(lineage1);
+	if lineage IN('No lineage identified','No lineage was able to be determined','Other (see com', 'None', 'none'
+									  'Specimen unsatisfactory for evaluation due to a technical error during processing.',
+									  'positive'," ", "POSITIVE", "Unknown", "not applicable", 'Unable to complete sequencing',
+									  'Specimen unsatisfactory for evaluation due to a technicalerror during processing.','detected',
+									  'Detected', 'DETECTED','NOT DETECTED', 'Invalid result', 'Negative', 'NEGATIVE','negative','Not detected', 'Not-Detected', 
+									  'Positive', 'Specimen unsatisfactory for evaluation','UNKNOWN','SHS_76525','SHS_75805','SEQUENCING UNSUCCESSFUL',
+									  'Test not done (qualifier value)', 'Other', 'Lineagefoundbutnocodemapped',
+									  'Unassigned', 'Below limit of detection','Probable Unassigned','Failed','INVALID','variant') then lineage2 = 'None';
+	else if SUBSTR(lineage, 11, 9)= 'B.1.1.529' then lineage2 = 'B.1.1.529';
+	else if lineage = 'BA.1 / B.1.1.529' then lineage2 = 'BA.1';
+	drop text_result_desc;
+	drop word;
+run;
+data DSHS_TX14;
+	set DSHS_TX13;
+	length original_pango_lineage $82.;
+	if lineage2 = '(B.1.1.7.)' then original_pango_lineage = 'B.1.1.7';
+	else if lineage2 = 'B1.617.2' then original_pango_lineage = 'B.1.617.2';
+	else original_pango_lineage = lineage2;
+run;
+
+*create variables to match w/ CDC data;
+data DSHS_TX15;
+	set DSHS_TX14;
+	lineage_pango_lineage = original_pango_lineage;
+run;
+*make sure PANGO lineages were cleaned properly;
+proc freq data=DSHS_TX15;
+	tables lineage_pango_lineage/list;
+run; 
+	
+/**********************/
+/*clean date variables*/
+/**********************/
+
+*recode variables to stay consistent w/ CDC data;
+DATA DSHS_TX16;
+	SET DSHS_TX15;
+	dob = pat_dob;
+	collection_date = coll_dt;
+	receive_date = lab_report_dt;
+RUN; 
+*reformat SAS date into mmddyy10. format for consistency with the CDC data;
+DATA DSHS_TX17;
+	SET DSHS_TX16;
+	FORMAT dob             mmddyy10.
+		   collection_date mmddyy10.
+		   receive_date    mmddyy10.;
+	DROP pat_dob coll_dt lab_report_dt;
+RUN;
+
+/************************/
+/*calculate age from DOB*/
+/************************/
+
+data DSHS_TX18;
+	set DSHS_TX17;
+	age1 = INTCK('year', dob, collection_date, 'c');
+	if age1 <0 then age='Unknown';
+	else if age1= . then age='Unknown';
+	else age=age1;
+	drop age1;
+run;
+
+/***************************/
+/*reformat sex to match CDC*/
+/***************************/
+
+data DSHS_TX19;
+	set DSHS_TX18;
+	if pat_current_sex_cd IN('U',' ') then sex='Unknown';
+	else if pat_current_sex_cd='M' then sex='Male';
+	else if pat_current_sex_cd='F' then sex='Female';
+	drop pat_current_sex_cd;
+run;
+
+
+/**************************************************************************************/
+/*recode & account for missing for vendor name, specimen source, vendor accession, and 
+ID to match w/ CDC data*/
+/**************************************************************************************/
+
+data DSHS_TX20;
+	set DSHS_TX19;
+	length vendor $80 specimen_source $80;
+
+	if reporting_facility_name=' ' then vendor='Unknown';
+	else vendor = reporting_facility_name;
+
+	if specimen_desc=' ' then specimen_source='Unknown';
+	else specimen_source = specimen_desc;
+
+    if  NEDSS_Accession=" " then vendor_accession=testing_lab_accession_number;
+	else vendor_accession = NEDSS_Accession; 
+	ID = specimen_ID;
+
+	drop reporting_facility_name specimen_desc specimen_ID;
+run;
+
+*modify variable lengths for consistency w/ CDC data;
+proc sql;
+	ALTER TABLE DSHS_TX20
+		MODIFY vendor_accession       char(80) format=$80.,
+			   ID                     char(19) format=$19.,
+			   original_pango_lineage char(82) format=$82.,
+			   lineage_pango_lineage  char(82) format=$82.,
+			   vendor                 char(80) format=$80.,
+			   specimen_source        char(80) format=$80.;
+quit;
+
+/**********************************************************/
+/*drop extraneous variables not related to the CDC dataset*/
+/**********************************************************/
+
+data DSHS.DSHS_TX_cleaned (keep = ID age collection_date receive_date race ethnicity original_pango_lineage 
+					   lineage_pango_lineage sex state specimen_source GISAID_accession vendor_accession vendor  
+					   pat_address_city pat_address_county pat_address_street_one pat_address_street_two zip
+					   reporting_facility_CLIA ordering_facility_name);
+	set DSHS_TX20;
+run;
+
+/*******************************/
+/*deduplicate process for NEDSS*/
+/*******************************/
+
+*drop Fulgent Genetics & Quest Diagnostics data b/c it's already captured in CDC;;
+data DSHS.DSHS_FINAL;
+set DSHS.DSHS_TX_cleaned;
+*if vendor=:"Fulgent" then delete;
+if vendor=:"Quest" then delete;
+run;
+*deduplicate NEDSS dataset for observations reported multiple times;
+*N = 108,358;
+proc sort data=DSHS.DSHS_FINAL nodupkey dupout=NEDSS_duplicates;
+by vendor_accession;
+run;
+
+/*************************************************************************************************/
+/*import cleaned CDC data to be combined with DSHS Austin lab results for public-facing dashboard*/
+/*************************************************************************************************/
+
+/*libname to access cleaned permanent CDC dataset*/
+
+libname TX_Cumul "/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data";
+run;
+
+/*update formats & lengths in the CDC dataset for final consistency before appending datasets
+  (this may need to be modified if anything changes [see below])*/
+
+*N=129,051;
+data CDC_reformat1;
+	set TX_Cumul.TX_CDC_Cleaned;
+	age_CDC = PUT(age, 7.);
+	drop age;
+run;
+
+*rename for consistency;
+data CDC_reformat_final;
+	set CDC_reformat1;
+	age = age_CDC;
+	drop age_CDC;
+run;
+*modify variable lengths for consistency;
+proc sql;
+	ALTER TABLE CDC_reformat_final
+		MODIFY original_pango_lineage char(82) format=$82.,
+			   lineage_pango_lineage  char(82) format=$82.,
+			   vendor                 char(80) format=$80.,
+			   specimen_source        char(80) format=$80.,
+			   ID                     char(19) format=$19.,
+               vendor_accession       char(80) format=$80.,
+			   GISAID_accession       char(91) format=$91.;
+quit;
+
+/*****************************/
+/*deduplicate process for CDC*/
+/*****************************/
+
+*drop Helix and LabCorp data from Sept 2021 onwards b/c it's already captured in NEDSS;
+*drop Aegis data from Oct 2021 onwards b/c it's already captured in NEDSS;
+*******these are currently commented out since we are only using DSHS Lab results in the NEDSS data*******;
+*N (CDC) = 128,990;
+data CDC_FINAL;
+set CDC_reformat_final;
+/*if vendor =:"Helix" then do;
+	if collection_date >= '01SEP2021'd
+	then delete;
+end;
+else if vendor =:"Laboratory" then do;
+	if collection_date>='01SEP2021'd
+	then delete;
+end;
+else if vendor =:"Aegis" then do;
+	if collection_date>='01OCT2021'd
+	then delete;
+end;
+else if vendor =:"Fulgent" then do;
+	if collection_date>='01OCT2021'd
+	then delete;
+end;*/
+run;
+
+/******************************************/
+/*combine CDC and DSHS Austin lab datasets*/
+/******************************************/
+
+/*double check that data types, formats, and lengths of all matching variables are now consistent*/
+
+proc contents data=CDC_FINAL; run;
+proc contents data=DSHS.DSHS_FINAL; run;
+
+/*concatenate w/ CDC data*/
+
+data CDC_DSHS_NGS;
+	set CDC_FINAL DSHS.DSHS_FINAL;
+run;
+
+/*************/
+/*deduplicate*/
+/*************/
+
+*you can look the duplicates dataset for QA purposes
+12/13/22: 0 duplicates today;
+proc sort data=CDC_DSHS_NGS nodupkey dupout=duplicates;
+	by vendor_accession;
+run;
+
+/*******************************************************************/
+/*merge combined sequencing data with geographic Jurisdictions file*/
+/*******************************************************************/
+
+/*refill in missing jurisidictions with correct zip codes (can MODIFY code)*/
+
+data CDC_DSHS_NGS1;
+	set CDC_DSHS_NGS;
+	if zip='76406' then zip='77406';
+if ID='3876' then zip='79907';
+if ID='5049' then zip='79938';
+if ID='497129574' then zip='75080';
+if ID='K813005320' then zip='77584';
+
+	else if vendor_accession='LC0325623' then zip='78594';
+	else if vendor_accession='W364214153' then zip='77044';
+	else if vendor_accession='SPID1004439319' then delete;
+	else if vendor_accession='FH-OR4467788' then zip='76053';
+	else if vendor_accession='FH-OR4144226' then zip='76014';
+	else if vendor_accession='FH-OR4142230' then zip='76108';
+	else if vendor_accession='FH-OR4142143' then zip='76126';
+	else if vendor_accession='FH-OR4468095' then zip='76140';
+	else if vendor_accession='FH-OR4143213' then zip='76140';
+	else if vendor_accession='FH-OR4517577' then zip='76182';
+else if vendor_accession='3580887' then zip='78227';
+else if vendor_accession='3473198' then zip='78207';
+else if vendor_accession='22927405530' then zip='75089';
+
+run;
+
+
+/*import zip code lookup geographic table*/
+
+proc import out = juris_zip 
+datafile= "/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Jurisdictions_TSAs.xlsx"  
+dbms=xlsx 
+replace;
+sheet = Sheet1; 
+DATAROW=2; 
+getnames=yes;
+run;
+
+/*merge geographic variables*/
+
+*convert zip code in jurisdiction sheet to character/string and have matching length in order to left join;
+data juris_zip1;
+	set juris_zip;
+	zipchar = PUT(ZipCode, 5.);
+	drop ZipCode;
+	rename zipchar = ZipCode;
+run;
+*Merge jurisdiction table with CDC data (left join);
+proc sql;
+create table combined as
+select a.*,b.City, b.County, b.PHRJ, b.Jurisdict, b.TSA
+from CDC_DSHS_NGS1 as a
+left join juris_zip1 as b
+on a.zip=b.ZipCode;
+quit; 
+
+/*Check to see if there are any missing jurisdictions (usually due to incorrect zip codes)*/
+
+*6 have incorrect, non-TX, non-USA zip codes
+ If any of these have any address info listed in proc print, see if you can verify the address via Google search.
+ If you are able to verify the address, modify the code just before importing the jurisdiction file, and then
+ re-run the code to this point.;
+proc print data=combined;
+where Jurisdict=' ';
+run;
+*remove any incorrect zip codes left over that you were unable to verify;
+data combined1;
+	set combined;
+	if Jurisdict=' ' then delete;
+	drop pat_address_city pat_address_county pat_address_street_one pat_address_street_two;
+run;
+*remove any duplicates;
+proc sort data=combined1 nodupkey;
+by vendor_accession;
+run;
+
+/***************************************************************************************************************/
+/*Create variables for sequence reporter, Variant Network Project indicator, and Network Project tagged samples*/
+/***************************************************************************************************************/
+
+/*create variable for sequence reporter (ADD as network partners come in - **TX Tech**)*/
+
+data combined2;
+	set combined1;
+	length reporter $ 20.;
+	if reporting_facility_CLIA = '45D0861764' 
+       OR vendor IN('UT Southwestern Med Ctr Clinical Labor Biocenter', 'University of Texas Southwestern Medical Center') 
+	   then reporter = 'UTSW';
+	else if reporting_facility_CLIA = '45TXD40BCM' then reporter = 'BCM';
+	else if reporting_facility_CLIA = '45TXD20UTH' then reporter = 'UTHealth SPH';
+	else if reporting_facility_CLIA = '45D0660483' 
+		OR vendor = 'UT Health San Antonio Department of Pathology Laboratories' then reporter = 'UTHealth SA';
+	else if reporting_facility_CLIA = '45TXD60TAM' OR vendor = 'TXVNP-TAMU' then reporter = 'TAMU';
+	else if reporting_facility_CLIA = '0000000000' then reporter = 'TX Tech';
+	else if reporting_facility_CLIA = '45D0660281' then reporter = 'UTMB';
+	else if vendor IN('Aegis Sciences Corporation', 'Aegis Sciences', 'Broad Institute', 'CDC', 'FULGENT GENETICS', 
+					  'Fulgent Genetics', 'Helix', 'Helix OpCo LLC', 'Helix/Illumina', 'Infinity Biologix', 'LABCORP', 
+					  'LabCorp', 'Laboratory Corporation Of America Holdings, Inc', 'Laboratory Corporation of America',
+				      'Mako Medical', 'Quest Diagnostics Incorporated', 'Quest Diagnostics-SJC', 'UW Virology Lab') 
+	then reporter = 'CDC';
+	else if vendor = 'TEXAS DSHS AUSTIN' then reporter = 'DSHS';
+	else reporter = 'Additional Labs';
+run;
+
+/*create variable for Variant Network Project (VNP) indicator*/
+
+data combined3;
+	set combined2;
+	length source $ 35.;
+	if ordering_facility_name=:'TXVNP' then source = 'TX Variant Network Samples';
+	else source = 'Other Samples';
+run;
+
+*check to see if there are any new network-tagged institutions to the code following this PROC FREQ;
+proc freq data=combined3;
+	tables ordering_facility_name;
+	where ordering_facility_name =: 'TXVNP';
+run;
+
+/*create variable for Network Project-tagged samples*/
+
+data combined4;
+	set combined3;
+	length VNP_label $ 25.;
+	if ordering_facility_name in('TXVNP-UTHSA', 'TXVNP-UTSA') then VNP_label = 'UTHealth SA_VNP';
+	else if ordering_facility_name = 'TXVNP-UTSW' then VNP_label = 'UTSW_VNP';
+	else if ordering_facility_name in('TXVNP-CPL', 'TXVNP-EPDPH', 'TXVNP-UMCEP', 'TXVNP-UTSPHB', 'TXVNP-UTT',
+									  'TXVNP-TTU') then VNP_label = 'BCM_VNP';
+	else if ordering_facility_name = 'TXVNP-UTSPHH' and reporting_facility_CLIA = '45TXD40BCM' 
+		then VNP_label = 'BCM_VNP';
+	else if ordering_facility_name = 'TXVNP-TAMU' then VNP_label = 'TAMU_VNP';
+	else if ordering_facility_name = 'TXVNP-UTSPHH' and reporting_facility_CLIA = '45TXD20UTH' 
+		then VNP_label = 'UTHealth SPH_VNP';
+	else VNP_label = 'Non-Network Samples';
+run;
+
+*check to see newly created variables;
+proc freq data=combined4; 
+	tables reporter; 
+run;
+proc freq data=combined4; 
+	tables source; 
+run;
+proc freq data=combined4; 
+	tables VNP_label; 
+run;
+
+/*view breakdown of sequencing counts of the additional labs outside of SARS-CoV-2 network project*/
+
+proc freq data=combined4;
+	where reporter = 'Additional Labs';
+	tables vendor;
+run;
+/*proc freq data=combined4;
+	where reporter = 'Additional Labs';
+	tables vendor*reporting_facility_CLIA/list;
+run;*/
+
+/*******************************************************/
+/*drop reporting_facility_CLIA & ordering_facility_name*/
+/*******************************************************/
+
+data combined5;
+	set combined4;
+	*collection_week=intnx('week1',collection_date,0,'end');
+	*format collection_week mmddyy10.;
+	drop reporting_facility_CLIA ordering_facility_name;
+run;
+
+/**************************/
+/*create permanent dataset*/
+/**************************/
+
+*04/01/2025 all reporters 438,697;
+libname NGS "/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data";
+run;
+data NGS.CDC_DSHS_NGS_final;
+	set combined5;
+run;
+
+ 
+
+
+
+Lineage Sorting Code 
+/*****************************************************************************/
+/* Start a session named mySession using the existing CAS server connection */
+/* while allowing override of caslib, timeout (in seconds), and locale */
+/* defaults. */
+/*****************************************************************************/
+cas mySession sessopts=(caslib=casuser timeout=1800 locale="en_US");
+
+/*****************************************************************************/
+/* Create a default CAS session and create SAS librefs for existing caslibs */
+/* so that they are visible in the SAS Studio Libraries tree. */
+/*****************************************************************************/
+cas;
+caslib _all_ assign;
+
+/********************************************************************************/
+/********************************************************************************/
+/****************************************************************************************************************************
+Name:                 COVID Variant Dashboard.sas
+Purpose:     Create a SAS dataset for the Variant Tableau Dashboard
+Location:    S:\infect\Coronavirus Epidemiology Team\COVID-19 Surveillance\COVID-19 Variants\Tableau Dashboard\COVID-19 Variant Dashboard SR
+Original:     Sequencing analysis 5.17.21
+Created By: Melissa Freeland
+Created Dt: 2021  
+Edited By:  Sharon Riley
+Edited Dt:   9.9.2021     
+*******************************************************************************************************************************/
+
+***********************************************************************
+LIBNAME 
+************************************************************************;
+libname Seq "/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data";
+
+/************************************************************************
+         Import the latest combined data from CDC and DSHS Austin Laboratory
+*************************************************************************/
+proc import datafile="/mnt/viya-share/data/dse/eaid-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data/CDC_DSHSAustin_NGS_combined.xlsx"
+out= NGS_Cumulative1
+DBMS=xlsx
+REPLACE;
+SHEET='CDC NGS Texas Cumulative File_G';
+GETNAMES=yes;
+run;
+/**************************************************************************************************************
+
+**************************************************************************************************************/
+data seq.ngs_cumulative;
+set NGS_Cumulative1;
+if lineage_PANGO_lineage = ' ' then delete;
+run;
+
+/**************************************************************************************************************************
+Need to re-run code after I created permanent dataset, so bring  in permanent dataset
+*****************************************************************************************************************************/
+data ngs_cumulative(drop=ethnicity race);
+set seq.ngs_cumulative;
+ethnicity1=propcase(ethnicity);
+race1=propcase(race);
+run;
+ PROC FREQ DATA= ngs_cumulative; 
+TABLES lineage_PANGO_lineage  ;
+WHERE collection_date ge '29MAR2025'd;
+RUN ;
+
+/********************************************************************************************************************
+        Per meeting 9.14.21 Dr. Shufford remove lineages=None
+***********************************************************************************************************************/
+proc freq data=ngs_cumulative;
+table lineage_pango_lineage;
+run;
+
+data ngs_cumulative1;
+set ngs_cumulative; 
+ if lineage_PANGO_lineage in ('NA', 'None', 'Unassigned', 'Failed', 'Below limit of detection') then delete; 
+run;
+ PROC FREQ DATA= ngs_cumulative1; 
+TABLES collection_date ;
+WHERE collection_date ge '29MAR2025'd; ;
+RUN ;
+/************************************************************************************************************************
+Clean Data; NOTE for this Dashboard we are not using age, ethnicity or race, but may need it for later. 
+********************************************************************************************************************/
+
+data ngs (drop = age zip ethnicity1 race1); 
+ set ngs_cumulative1 ;
+
+age1=age;
+if age = '<1' then age1= '0';
+else if age = '90+' then age1= '90';
+
+ethnicity=ethnicity1;
+if ethnicity1 in ('-', 'Amr', 'Decline To Identify', 'Decline_to_identify', 'Dta', 'Nam', 'Ng', 'Prefer Not To Answer', 'Unknown') 
+                           then ethnicity = 'Unknown           ';
+else if ethnicity1 in ('Hispanic', 'Hispanic Or Latino') then ethnicity = 'Hispanic or Latino';
+else if ethnicity1 in ('Non Hispanic Or Latino', 'Non-Hispanic', 'Non-hispanic_or_latino', 'Not Hispanic', 'Not Hispanic Or Latino') THEN ethnicity = 'Not Hispanic or Latino';
+
+race=race1;
+if race1 in ('""', '"prefer Not to Share"', '-', 'A', 'Decline To Identify', 'Decline_to_identify', 'Dta', 'Ng', 'Not Provided', 'Not Sure', 'Prefer Not To Answer', 'Unk', 'Unknown') then race = 'Unknown';
+else if race1 in ('Other', 'O', 'Oth', 'Other', 'Other Race', 'Multi-Racial') then race = 'Other';
+else if race1 in ('"american Indian Or Alaska Native"', 'Am Ind Alsk Ntv', 'American Indian And Alaska Native; Two Or More Races', 'American Indian Or Alaska Native',
+                                                      'American Indian Or Alaskan Native', 'American Indian/Alaskan Native', 'Amr') then race = 'American Indian or Alaskan Native';
+else if race1 in ('"black Or African American"', 'Afr', 'Black', 'Black Or Afr Am', 'Black Or Afican American') then race = 'Black or African American';
+else if race1 in ('Asian', 'Asn') then race = 'Asian';
+else if race1 in ('Multi-Racial White', 'White', 'White Other', 'Cau', 'Caucasian' ,'W', 'Whi', 'White') then race = 'White';
+else if race1 in ('Hawaii Pac Isl', 'Nai', 'Nam', 'Native Hawaiian Or Other Pacific Islander', 'Native Hi Or Other Pacific isl') then race = 'Native Hawaiian or Other Pacific Islander';
+else race="Unknown";
+                                                                                                                                                                                                                                                                                                                           
+ zip1=zip;
+if zip in ('U', 'UNKNOWN', 'Unknown', 'UNKNOWN000') then zip1 = ' ';
+run;
+
+
+data ngs1;
+set ngs;
+age=input(age1, 8.);
+zip=input(zip1,8.);
+run;
+
+/***************************************************************************************************************************
+I need to change for Tableau hardcode formats, i dont' want to export to excel then upload to SAS just to get my formats.
+Can't figure out another way for SAS dataset to keep formats for import into Tableau
+****************************************************************************************************************************/
+/* 2/2/23 retrieving collect and report dates of UTSW BA.4/BA.5 cases for VNP meeting*/
+proc contents data= ngs1 ;
+RUN; 
+
+proc freq data=ngs1;
+table receive_date ;
+where lineage_PANGO_lineage= "BA.4/BA.5";
+run;
+/****************************************************************************************************
+latest CDC updates per MF 8.23.21: sublineages are aggregated with parent lineage
+https://www.cdc.gov/coronavirus/2019-ncov/variants/variant-info.html
+
+Alpha: B.1.1.7 and Q
+Beta: B.1.351, B.1.351.2, B.1.351.3
+Delta: B.1.617.2 and AY; not including AY.1 AY.2
+Gamma: P.1 and P.1 sublineages
+Mu: B.1.621 and B.1.621.1
+Omicron: B.1.1.529 and BA sublineages; not including BA.2, BA.2.12.1, BA.4, BA.5
+
+***********************************************************************************************************/
+data ngs2 ;
+  set ngs1;
+  Length lineage1 $ 12 ;
+  if lineage_PANGO_lineage =: 'P.1' then lineage1 = "P.1";
+
+  else if lineage_PANGO_lineage in ('C.37', 'C.37.1') then lineage1= "C.37" ;
+
+  else if lineage_PANGO_lineage in ('B.1.351', 'B.1.351.2', 'B.1.351.3') then lineage1 = "B.1.351";
+
+  else if lineage_PANGO_lineage in ( "AY.10","AY.11","AY.12","AY.13","AY.14","AY.15","AY.16","AY.16.1","AY.17","AY.18","AY.19","AY.20", 
+"AY.21","AY.22","AY.23","AY.23.1","AY.24","AY.24.1","AY.25","AY.25.1","AY.25.1.2","AY.25.2","AY.25.3","AY.26", "AY.27", "AY.28", "AY.29", 
+"AY.29.1","AY.3","AY.3.1","AY.3.2","AY.3.3","AY.3.4","AY.30","AY.31","AY.32","AY.33","AY.34","AY.34.1","AY.34.1.1","AY.35","AY.36","AY.36.1", 
+"AY.37", "AY.38","AY.39", "AY.39.1", "AY.39.1.1", "AY.39.2", "AY.39.3", "AY.4", "AY.4.2", "AY.4.2.1", "AY.4.2.2", "AY.4.2.3","AY.4.2.4","AY.4.3", 
+"AY.4.4", "AY.4.5","AY.4.7","AY.4.8", "AY.4.11", "AY.4.13", "AY.4.17", "AY.40", "AY.41", "AY.42", "AY.43", "AY.43.1", "AY.43.2", "AY.43.3", 
+"AY.43.7", "AY.43.8", "AY.44", "AY.45", "AY.46", "AY.46.1", "AY.46.2", "AY.46.3", "AY.46.4", "AY.46.5", "AY.46.6", "AY.47","AY.48","AY.49","AY.5",
+"AY.5.2","AY.5.3","AY.5.4","AY.5.6","AY.5.7","AY.50","AY.51", "AY.52","AY.53","AY.54","AY.55","AY.56","AY.57","AY.58","AY.59","AY.6","AY.60",
+"AY.61","AY.62","AY.64","AY.65","AY.66","AY.67","AY.68","AY.69","AY.7","AY.7.1","AY.7.2","AY.70","AY.71","AY.72","AY.73","AY.74","AY.75","AY.75.1",
+"AY.76", "AY.77","AY.78","AY.79","AY.8","AY.80","AY.81","AY.82","AY.83","AY.84","AY.85","AY.86","AY.87","AY.88","AY.89","AY.9","AY.9.1","AY.9.2",
+"AY.90","AY.91","AY.92","AY.93","AY.95","AY.96","AY.97","AY.98","AY.98.1","AY.99","AY.99.1","AY.99.2",
+"AY.100","AY.101","AY.102","AY.102.1","AY.102.2","AY.103","AY.103.2","AY.104","AY.105","AY.106","AY.107","AY.108","AY.109","AY.110",
+"AY.111","AY.112","AY.113","AY.114","AY.116","AY.116.1","AY.117","AY.118","AY.119","AY.119.1", "AY.119.2","AY.120", "AY.120","AY.120.1",
+"AY.120.2","AY.121","AY.121.1","AY.122","AY.122.1","AY.122.4","AY.122.6","AY.123","AY.124","AY.124.1", "AY.125","AY.126","AY.127", "AY.127.1","AY.128","AY.129",
+"AY.131","AY.132","B.1.617.2") then lineage1 = "B.1.617.2";
+
+  else if lineage_PANGO_lineage =: 'Q' or lineage_PANGO_lineage = 'B.1.1.7' then lineage1 = "B.1.1.7";
+
+  else if lineage_PANGO_lineage in ('B.1.621','B.1.621.1','B.1.621.2',"BB.1","BB.2") then lineage1 = "B.1.621";
+
+  else if lineage_PANGO_lineage = 'B.1.1.529' or lineage_PANGO_lineage in ('CN.1','BW.1.1', 'BA.3','BN.1.4.1', 'BN.1.7', "BN.1.9", 'CQ.2','DF.1',
+'XE', 'XG', 'XM', 'XZ', 'XAC', 'XAF','CR.1', 'CR.1.1', 'DQ.1', 'DR.1') then lineage1 = "B.1.1.529";
+else if lineage_pango_lineage in ('BA.1','BA.1.15','BA.1.1','BAa.1.1','Ba.1') then lineage1= "BA.1" ;
+
+  else if lineage_PANGO_lineage in ('BA.2','Likely BA.2', 'BA.2.1','BA.2.3','BA.2.3.1','BA.2.3.2','BA.2.3.3','BA.2.3.4','BA.2.3.5','BA.2.3.6','BA.2.3.7','BA.2.3.8','BA.2.3.9','BA.2.3.10',
+'BA.2.3.14','BA.2.3.15','BA.2.3.16','BA.2.3.17','BA.2.4','BA.2.5','BA.2.6','BA.2.7','BA.2.8','BA.2.9','BA.2.9.2','BA.2.9.3','BA.2.10','BA.2.10.1','BA.2.11','BA.2.12','BA.2.13','BA.2.14','BA.2.17','BA.2.18', 
+'BA.2.20','BA.2.21','BA.2.22','BA.2.23','BA.2.23.1','BA.2.24','BA.2.25','BA.2.26','BA.2.27','BA.2.29','BA.2.31','BA.2.32','BA.2.36','BA.2.37','BA.2.38','BA.2.38.1','BA.2.40.1',
+'BA.2.41','BA.2.42','BA.2.43','BA.2.47','BA.2.48','BA.2.49','BA.2.50','BA.2.51','BA.2.52','BA.2.54','BA.2.55','BA.2.56','BA.2.57','BA.2.58','BA.2.59','BA.2.60','BA.2.64','BA.2.65',
+'BA.2.66','BA.2.68','BA.2.71','BA.2.72','BA.2.73','BA.2.74',  'BA.2.76','BA.2.78','BA.2.81','BA.2.13.1','BA.2.3.20','BA.2.31.1','BA.2.33','BA.2.69','BA.2.9.7',
+'CM.1','CM.2','CM.4','CM.4.1','CM.5','CM.6','CM.6.1','CM.8.1','XBC.1', 'BA.2 LINEAGE','BA.2.2.1','BA.2.28','BA.2.12.1', 'BG','CM.8.1	','CM.8.1.4') then lineage1 = "BA.2";
+
+  else if lineage_pango_lineage in('BM.1.1','BM.1.1.1','BA.2.75.1','BA.2.75.3','BA.2.75.5','BA.2.75.6','BA.2.75.7','BA.2.75.10','BA.2.75','BA.2.83','BA.2.75.4','BL.1.4','BL.2','BM.1.1.3','BN.5','BN.6', 'BR.1.2','CJ.1',
+'BM.1.1.4', 'BR.2', 'BR.2.1', 'BR.4', 'BR.2.1', 'CV.1','CV.2','BA.2.75.2','CA.1','CA.7','CA.5','XBD', 'CA.3.1','CA.3.1','CA.7',
+'CJ.1','DV.1.1','DV.1','CH.2','DV.5','FK.1.1.2',
+'DV.6','DV.7','DV.7.1','DV.8','FK.1.1','FK.1.2.2','FR.1','FV.1','FS.1','DV.7.1.2','DV.7.1.3') then lineage1 = "BA.2.75";
+
+
+else if lineage_pango_lineage in ('CH.1.1','CH.1.1.1','CH.1.1.10','CH.1.1.17','CH.1.1.18','CH.1.1.19','CH.1.1.2','CH.1.1.11','CH.1.1.3','CH.1.1.7',
+'CH.1.1.24','CH.1.1.25','CH.1.1.27','CH.1.1.15','CH.1.1.32') then lineage1= "CH.1.1" ;
+
+
+else if lineage_pango_lineage in('BA.4','(BA.4)','Likely BA.4/BA.5', 'BA.4.1','BA.4.1.1','BA.4.1.3','BA.4.2','BA.4.4', 'BA.4.1.10',
+'BA.4.1.4','BA.4.1.5','BA.4.1.6','BA.4.1.8','BA.4.1.9','BA.4.3','BA.4.6.1','BA.4.6.2','BA.4.8','BA.4.6.2','BA.4.6.3','BA.4.6','BA.4.6.4','BA.4.6.5','BA.4.7', 'DC.1')  then lineage1 = "BA.4";
+
+else if lineage_pango_lineage in ('BN.1','BN.1.2','BN.1.2.1','BN.1.3','BN.1.3.1','BN.1.3.5','BN.1.3.6','BN.1.10','BN.1.4','BN.1.4.3','BN.1.5',
+'BN.1.6','BN.1.7','BN.1.9','BN.1.1','BN.1.1.1','BN.3.1','BN.10','BN.1.2.2','BN.1.2.3','BN.1.3.7','BN.1.3.8','BN.1.5.2') then lineage1= "BN.1";
+
+else if lineage_pango_lineage in('BQ.1','(BQ.1)','BQ.1.10','BQ.1.10.1','BQ.1.11','BQ.1.12','BQ.1.13','BQ.1.14','BQ.1.15','BQ.1.19','BQ.1.5',
+'BQ.1.6','BQ.1.8','BQ.1.8.2','BQ.1.10.1','BQ.1.18','BQ.1.20', 'BQ.1.22', 'BQ.1.23', 'BQ.1.25','BQ.1.7','BQ.1.16','BQ.1.9','BQ.1.24', 
+'BQ.1.25.1', 'BQ.1.28','BQ.1.2','BQ.1.25.1','BQ.1.28','BQ.1.3','BQ.1.31','BQ.1.32','BQ.1.15.2','BQ.1.2.1','BQ.1.2.3','BQ.1.3.1','BQ.1.3.2','BQ.1.27') then lineage1 = "BQ.1";
+
+else if lineage_pango_lineage in('BQ.1.1', '(BQ.1.1)','BA.4/BA.5','Likely BA.4/BA','BQ.1.1.1','BQ.1.1.10','BQ.1.1.11','BQ.1.1.13','BQ.1.1.18',
+'BQ.1.1.19','BQ.1.1.20', 'BQ.1.1.22', 'BQ.1.1.23', 'BQ.1.1.24', 'BQ.1.1.26', 'BQ.1.1.27', 'BQ.1.1.28','BQ.1.1.3','BQ.1.1.4','BQ.1.1.5','BQ.1.1.6','BQ.1.1.7','BQ.1.1.8','BQ.1.1.17','BQ.1.1.2','BQ.1.1.15'
+'BQ.1.1.31', 'BQ.1.1.32', 'BQ.1.13.1', 'BQ.1.1.25', 'BQ.1.1.29','BQ.1.1.36','BQ.1.1.39','BQ.1.1.4','BQ.1.10.2','BQ.1.1.40','BQ.1.1.41','BQ.1.1.43','BQ.1.1.44',
+'BQ.1.1.45','BQ.1.1.47','BQ.1.1.48','BQ.1.1.5','BQ.1.1.51','BQ.1.1.52','BQ.1.1.54','BQ.1.1.56','BQ.1.1.57','BQ.1.1.58','BQ.1.1.6','BQ.1.1.60',
+'BQ.1.1.61','BQ.1.1.63','BQ.1.1.65','BQ.1.1.67','BQ.1.1.68','BQ.1.1.69','BQ.1.1.7','BQ.1.1.76','BQ.1.1.35','BQ.1.1.49','BQ.1.1.55','BQ.1.1.66','BQ.1.1.9') then lineage1 = "BQ.1.1";
+
+else if lineage_pango_lineage in('BQ.2') then lineage1= "BQ.2" ;
+else if lineage_pango_lineage in('BF.7', '(BF.7)','BF.7.1','BF.7.12','BF.7.8', 'BF.7.4','BF.7.4.1','BF.7.5','BF.7.6','BF.7.7',
+'BF.7.14','BF.7.16','BF.7.19','BF.7.20','BF.7.22','BF.7.23','BF.7.24','BF.7.27','BF.7.21','BF.7.4.1','BF.7.5','BF.7.4.2') then lineage1 = "BF.7";
+
+else if lineage_PANGO_lineage in('BA.5','BA.5.1','BA.5.1.18','BA.5.1.23','BA.5.1.33','BA.5.2','BA.5.2.1', 'BA.5.2.20','BA.5.2.21','BA.5.2.31', 'BA.5.2.34', 'BA.5.2.35', 'BA.5.2.52', 'BA.5.2.6', 'BA.5.2.9','BA.5.3','BA.5.3.1', 
+'BA.5.3.4','BA.5.7', 'BA.5.9','XBF', 'XBE','BE','BE.1','BE.1.1','BE.1.1.1','BE.1.1.2','BE.1.2','BE.1.2.1', 'BE.1.3', 'BE.2','BE.3',
+'BE.4','BE.4.1.1','BE.4.1','BE.4.2','BF.3.1','BF.1','BF.1.1','BF.10','BF.11','BF.11.4','BF.12','BF.13','BE.1.4','BE.1','BE.1.1','BE.1.2.1',
+'BE.10','BF.10','BF.11','BF.13','BF.14','BF.26','BF.3','BF.39.1','BF.5','BE.1.4.1','BE.1.4.2','BE.5','BE.6','BF.11.1','BF.11.3','BF.11.4','BF.11.5','BF.29',
+'BF.31','BF.32','BF.6',"BF.14","BF.3.1","BF.15","BF.16","BF.18","BF.2","BF.21","BF.24","BF.25","BF.26","BF.27","BF.28",'BF.29',"BF.30","BF.3","BF.31",
+"BF.31.1","BF.4","BF.5","BF.8","BF.9",'BF.32','BF.36','BF.38','BF.39','BF.39.1','BF.40','BF.41','BF.5','BF.8','BF.9',
+'BF.6',"BH.1","BK.1","BL.1","BM.1","BM.11","BM.11.1","BM.2","BM.4.1.1","BN.2.1","BQ.1.2","BQ.1.3","BQ.1.4",
+'BU.1','BW.1','BW.1.1','BW.1.1.2','BW.1.2','BZ.2',"BV.2","BW.1","BR.1","BT.1","BU.1",'BU.2',"BY.1",'CD.1','CD.2','CK.1','CK.2','CK.2.1',
+'CK.2.1.1','CF.1','CK.1','CK.1.3','CK.1.4','CK.1.5','CK.2','CK.2.1','CK.2.1.1','CK.3','CK.1.2','CN.1','CN.2','CZ.2','CR.1.1','BE.10', 'CK.3', 'CL.1', 'CN.2', 'CY.1', 'DB.1','DB.2', 
+'DE.2', 'DF.1.1', 'DG.1', 'DJ.1.1', 'DJ.1.2', 'DK.1','DL.1','DM.1','DF.1','DF.1.1','DL.1','DM.1','DR.1','DR.2','DT.2','DT.3','DU.1','EB.1','ED.2',	
+'ED.3','EE.1','EE.2','EE.3','EE.5','EF.1','EF.1.1','EF.1.3','ES.1','EW.2','EY.1','FA.1','FB.2','BA.5.1.10','BA.5.1.12','BA.5.1.15','BA.5.1.16'	
+'BA.5.1.17','BA.5.1.19','BA.5.1.2','BA.5.1.20','BA.5.1.21','BA.5.1.22','BA.5.1.24','BA.5.1.25','BA.5.1.27','BA.5.1.28','BA.5.1.3','BA.5.1.30',
+'BA.5.1.35','BA.5.1.36','BA.5.1.4','BA.5.1.5','BA.5.1.6','BA.5.1.7','BA.5.1.8','BA.5.10	25','BA.5.10.1','BA.5.11','BA.5.12','BA.5.2.12','BA.5.2.13',
+'BA.5.2.14','BA.5.2.16','BA.5.2.18','BA.5.2.19','BA.5.2.2','BA.5.2.22','BA.5.2.23','BA.5.2.24','BA.5.2.25','BA.5.2.26','BA.5.2.27','BA.5.2.48','BA.5.2.28',
+'BA.5.2.3','BA.5.2.32','BA.5.2.33','BA.5.2.37','BA.5.2.38','BA.5.2.39','BA.5.2.4','BA.5.2.44','BA.5.2.53','BA.5.2.54','BA.5.2.56','BA.5.2.57',
+'BA.5.2.58','BA.5.2.59','BA.5.2.6','BA.5.2.60','BA.5.2.7','BA.5.2.8','BA.5.3.2','BA.5.3.3','BA.5.3.5','BA.5.5','BA.5.5.1','BA.5.5.2',
+'BA.5.5.3','BA.5.6','BA.5.6.1','BA.5.6.2','BA.5.8','BA.5.1.1','BA.5.10','BA.5.2.6','BE.12','BF.36','BF.38','BF.39','BF.40','BF.41','BF.7',
+'BG.2','BG.3','BG.4','BG.5','BM.2.3','BN.1','BW.1.1.1','CP.8','CS.1','DE.1','DN.2',
+'EC.1','EE.4',
+'EF.1.2',
+'EQ.1','FB.1',
+'FK.1.2','CP.1','CP.1.1','CP.4','CP.5','BA.5.2.6')then lineage1 = "BA.5";
+else if lineage_pango_lineage in('BA.2.86','BA.2.86.1','JN.2','BA.2.86.3','JN.11','JN.4','KQ.1','KR.1','KV.2',
+'KY.1','KW.1','KZ.1','LL.1','LA.1','LF.1','LF.3.1.1','LF.1.1.','LF.3.1.','LD.1','LQ.1.1','LQ.1','LY.1','LZ.1','LZ.1.1','LU.1','LU.2') then lineage1 = "BA.2.86";
+
+else if lineage_pango_lineage in('XBB','(XBB)','Likely XBB','XBB.1','XBB.1.1','XBB.1.2','XBB.1.3', 'XBB.1.4','XBB.1.6',
+'XBB.1.7','XBB.1.9','XBB.1.6','XBB.1.11.1','XBB.1.17.1',
+'XBB.1.18.1','XBB.1.19','XBB.1.19.1','XBB.1.22','XBB.1.22.1','XBB.1.22.2','XBB.1.28','XBB.1.28.1','XBB.1.3','XBB.1.30','XBB.1.4','XBB.1.41.1','XBB.1.42','XBB.1.9.5',
+'XBB.1.9.3','XBB.1.10','XBB.1.13','XBB.1.15','XBB.1.19','XBB.2','XBB.2.3.1',
+'XBB.2.3.11','XBB.2.3.2','XBB.2.3.3','XBB.2.3.4','XBB.2.3.5','XBB.2.3.6','XBB.2.3.7','XBB.2.4',	
+'XBB.2.5','XBB.2.6.2','XBB.2.11.1','XBB.3','XBB.3.2','XBB.2.6','XBB.3','XBB.3.2','XBB.4','XBB.6.1','XBB.8','HU.1.1',
+'EG.1','EG.10','XBB.1.19.1','XBB.1.18','XBB.1.18.1','XBB.1.33','XBB.1.41','XBB.1.41.2','XBB.1.42.1','XBB.1.42.2','XBB.1.44','FE.1','FE.1.1','FE.1.1.1','FE.1.1.2','FE.1.2','FP.2.1','FP.2.1.1','FW.1','FW.1.1','FY.1','FY.5.1.1','FY.1.1',
+'FY.1.2','FY.2','FY.3.1','FY.3','FY.3.2','FY.3.3','FY.4.1','FY.4','FY.4.1.1','FY.4.2','FY.5','GA.2','GA.4','GA.4.1','GA.3','GA.6','GD.1','GD.2','HE.1','GW.5',
+'GS.1','GS.3','GS.4','GS.4.1','GZ.1','JC.1','JC.4','JC.5','JC.5.1',
+'GW.5.1.1','GW.5.3.1','HB.1','GE.1.2','KE.1','HB','JF','JY.1','XBB.1.5.70','XBB.1.9.1','FL.1.1','FL.1.3','FL.1.5','FL.1.6',
+'FL.10','FL.10.1','FL.12','FL.13','FL.15','FL.17.2','FL.1','FL.2','FL.2.1','FL.3','FL.3.1','FL.3.2','FL.4',
+'FL.5','FL.7','FL.8','FL.13.3','FL.22','FL.27','FL.4.6','FL.4.7','FL.18','FL.20.2','FL.21','FL.25','FL.31','FL.32','FL.13.2','FL.16','FL.19.1','FL.2.2.1','FL.2.3',
+'FL.20','FL.24','FL.29','HN.1','HN.4','HN.5','HN.8','FL.1.5.2','FL.15.1.1','FL.10.2','FL.32.1','FL.36','FL','FL.1.5.1','XBB.1.9.2','EG.1','EG.1.3','EG.1.4','EG.4','EG.1.6','EG.1.8',
+'EG.10.1','EG.11','EG.2','EG.6.1','EG.7','EG.9.1','EG.14','HK.2','HK.3.2','HK.4','HK.6','HK.7','HK.11','HK.5','HK.1','JG.1','JG.2','JG.3.1',
+'JG.3.4','HK.3.1','HK.8','HK.20.1','HK.26','HK.27.1','HK.29','HK.3.10','HK.3.12','HK.13.1','HK.31','KB.1','KL.1.1','HK.3','HK.3.2.2',
+'HV.1','HV.1.1','HV.1.2','HV.1.5','HV.1.8','HV.1.11','XBB.1.16','XBB.1.16.2','XBB.1.16.10','XBB.1.16.4','XBB.1.16.5','XBB.1.16.12',
+'XBB.1.16.13','XBB.1.16.14','XBB.1.16.15','XBB.1.16.17','XBB.1.16.18','XBB.1.16.20','XBB.1.16.21','XBB.1.16.22','XBB.1.16.23','XBB.1.16.24','XBB.1.16.3','XBB.1.16.7','XBB.1.16.8','XBB.1.16.9','XBB.1.16.16','XBB.1.16.19',
+'GY.2.1','GY.1','GY.5','GY.6','GY.7','GY.8','HF.1','HF.1.1','HF.1.2','XBB.1.16.1','FU.1','FU.2','FU.1.1.1','FU.2.1','FU.3','FU','XBB.1.16.6',
+'JF.1','JF.1.1','JG.3','JG.3.2','XBB.1.16.11','XBB.2.3','XBB.2.3.1','XBB.2.3.2','XBB.2.3.3','XBB.2.3.4','XBB.2.3.5','XBB.2.3.7','XBB.2.3.8','XBB.2.3.13',
+'XBB.2.3.14','XBB.2.3.15','GJ.1','GJ.1.1','GJ.1.2','GJ.1.2.2','GJ.1.2.1','GM.2','HH.1','HH.5','HH.1.1','HH.2','HG.1','HG.2','GJ.1.2.5','GJ.2','GJ.4','GJ.5',
+'JE.1','JE.1.1','KH.1','JS.1','GE.1','GE.1.3','GE.1.1','GE.1.2.1','EG.5','EG.5.1','EG.5.1.1','EG.5.1.2','EG.5.1.4','EG.5.1.5','EG.5.1.6','EG.5.1.7','EG.5.1.8','EG.5.1.13','EG.5.2','EG.5.2.1',
+'EG.5.2.2','EG.5.2.3','EG.5.1.3','EG.5.1.15','XBB.1.5','XBB.1.5.10','XBB.1.5.11','XBB.1.5.12','XBB.1.5.13','XBB.1.5.14','XBB.1.5.15','XBB.1.5.16','XBB.1.5.17',	
+'XBB.1.5.18','XBB.1.5.19','XBB.1.5.2','XBB.1.5.20','XBB.1.5.21','XBB.1.5.23','XBB.1.5.24','XBB.1.5.25','XBB.1.5.26','XBB.1.5.27','XBB.1.5.28','XBB.1.5.3','XBB.1.5.30',
+'XBB.1.5.31','XBB.1.5.32','XBB.1.5.33','XBB.1.5.34','XBB.1.5.35','XBB.1.5.36','XBB.1.5.37','XBB.1.5.38','XBB.1.5.39','XBB.1.5.40','XBB.1.5.41',	
+'XBB.1.5.42','XBB.1.5.43','XBB.1.5.44','XBB.1.5.45','XBB.1.5.47','XBB.1.5.48','XBB.1.5.49','XBB.1.5.5','XBB.1.5.50','XBB.1.5.51',
+'XBB.1.5.52','XBB.1.5.55','XBB.1.5.56','XBB.1.5.57','XBB.1.5.59','XBB.1.5.6','XBB.1.5.61','XBB.1.5.62','XBB.1.5.63','XBB.1.5.64','XBB.1.5.65',
+'XBB.1.5.66','XBB.1.5.67','XBB.1.5.68','XBB.1.5.69','XBB.1.5.70','XBB.1.5.1','XBB.1.5.72','XBB.1.5.73','XBB.1.5.75','XBB.1.5.76','XBB.1.5.77','XBB.1.5.78','XBB.1.5.79','XBB.1.5.80','XBB.1.5.81','XBB.1.5.83','XBB.1.5.85','XBB.1.5.86','XBB.1.5.89',
+'XBB.1.5.9','XBB.1.5.91','XBB.1.5.92','XBB.1.5.93','XBB.1.5.95','XBB.1.5.96','XBB.1.5.98','XBB.1.5.100','XBB.1.5.102','XBB.1.5.103','XBB.1.5.104',
+'XBB.1.5.4','XBB.1.5.5','XBB.1.5.106','FD.5.1','XBB.1.5.6','XBB.1.5.7','XBB.1.5.8','FD.2','FD.1.1','FD.4','FH.1','EK.2','EK.2.1','EK.4',
+'EU.1.1','EU.1','EU.1.1.1','FT.3','FT.3.1','FT.3.1.1','FZ.1.1','FZ.2','GB.1','GC.1','GF.1','GN.1',
+'GN.1.1','GN.4','GV.1','GK.1','GK.1.1','GK.1.1.1','GK.1.2','GK.1.3','GK.1.6','GK.10','GK.1.8','GK.3','GK.3.1','GK.3.2','GK.2','GK.2.1','GK.2.2','GK.1.4','GU.1','HA.2','HC.1','HC.3','HJ.1','HP.1.1','HQ.1',
+'HR.1','HS.1','HS.1.1','HT.1','HT.2','HY.1','HZ.1','HZ.2','HZ.3','JB.2','JD.2','JK.1','KK.1','GK','GN','JD.1.1.5') then lineage1 = "XBB";
+
+else if lineage_pango_lineage in('JD.1.1','JD.1.1.1','JD.1.1.2','JD.1.1.3','JD.1','JD.1.1.7','JD.1.1.8') then lineage1 = "JD.1.1";
+else if lineage_pango_lineage in('JN.1','JN.1.1','JN.3','JN.1.4','JN.1.6','JN.1.9','JN.1.10','JN.1.2',
+'JN.1.8','JN.1.1.2','JN.1.5','JN.1.19','JN.1.22','JN.1.1.1','JN.1.14','JN.1.4.2','JN.1.15','JN.1.17','JN.1.3','JN.1.4.3','JN.1.20',
+'JN.1.24','JN.1.4.7','JN.1.6.1','JN.1.1.6','JN.1.32','JN.1.4.5','JN.1.4.6','JN.1.40','JN.1.43.1','JN.1.8.2','JN.1.8.3',
+'JN.1.9.2','JN.1.24.1','JN.1.28','JN.1.31','JN.1.37','JN.1.38','JN.1.39','JN.1.42','JN.1.46','JN.1.47','JN.1.47.1',
+'JN.1.23','JN.1.26','JN.1.4.4','JN.1.4.8','JN.1.48.1','JN.1.58','JN.1.36','JN.1.50.1',
+'JN.1.62','JN.1.65.1','JN.1.42.2','JN.1.59','JN.1.48.','JN.1.','JN.1.50','JN.1.15.1,JN.1.16','JN.1.16.1','JN.1.16.,JN.1.13','JN.1.13.1,
+JN.1.11','JN.1.11.1','KW.1.','KW.1.1','KW.1','KS.1','KS.1.1','KS.1.3','KS.1.','LE.1.2','LE.1','LE.1.1','LE.1.3.1','JN.1.7','JN.1.7.2',
+'JN.1.7.5','JN.1.7.3','JN.1.7.8','JN.1.7.4','JN.1.8.1','MC.11','MC.13','MC.13.1','MC.14','MC.16','MC.2','MC.2.1','MC.3',
+'MC.4','MC.6','MC.9','JN.1.16.5','MC.13.2','MC.19','MC.22','MC.8.1','MV.1','MV.1.1','NC.1','NC.1.2','NH.4','NL.5','JN.1.18',
+'JN.1.18.6','NL.1','NL.4','MC.21.1','MC.24','JN.1.16','MC.19.1','MK.1') then lineage1 = "JN.1";
+else if lineage_pango_lineage in('MC.1','MC.1.1','MC.1.3') then lineage1 = "MC.1";
+else if lineage_pango_lineage in('MC.10','MC.10.1','MC.10.2','MC.13.3') then lineage1 = "MC.10.1";
+else if lineage_pango_lineage in('MC.28','MC.28.1') then lineage1 = "MC.28.1";
+
+else if lineage_pango_lineage in('JN.1.18','JN.1.18.1','JN.1.18.2','JN.1.18.3','JN.1.18.4','JN.1.18.6') then lineage1 = "JN.1.18";
+else if lineage_pango_lineage in('KP.2','KP.2.1','KP.2.2','KP.2.7','KP.2.8','KP.2.14','KP.2.6','KP.2.10',
+'KP.2.15','KP.2.16','KP.2.','KP.2.19','KP.2.3.7','KP.2.15.1','KP.2.24','KP.2.9,KP.2.3','KP.2.3.2','KP.2.3.3','KP.2.3.1','KP.2.3.4','KP.2.4','KP.2.3.9','KP.2.3') then lineage1 = "KP.2";
+
+else if lineage_pango_lineage in('KP.3','KP.4.1','KP.4.2','KP.4.1.2','KP.4','KP.4.1.3','KP.4.2.1','KP.3.2.3','KP.3.3','KP.3.1','KP.3.1.3','KP.3.1.4','KP.3.2',
+'KP.3.2.1','KP.3.2.4','KP.3.2.5','KP.3.2.6','KP.5','KP.3.1.6','KP.3.3.1','KP.3.3.2','KP.3.3.3','KP.3.4','KP.3.5','KP.3.','KP.3.2.','KP.3.3.','KP.3.3.4','KP.3.6','KP.3.2.7') then lineage1 = "KP.3";
+else if lineage_pango_lineage in('KP.3.1.1','KP.3.1.') then lineage1 = "KP.3.1.1";
+else if lineage_pango_lineage in('KP.1.1','KP.1.1.1','KP.1','KP.1.','KP.1.2','KP.1.1.3','KP.1.1.5','KP.','KP.1.1.') then lineage1 = "KP.1.1";
+
+else if lineage_pango_lineage in('LB.1','LB.1.2','LB.1.2.1','LB.1.3','LB.1.4','LB.1.7','LB.1.3.2','LB.1.4.1',
+'LB.1.5','LB.1.8','LB.1.7.2','LB.','LB.1.','LB.1.3.','LB.1.1','LB.1.2.2','LB.1.3.1','LB.1.7.1','LB.1.3.3') then lineage1 = "LB.1";
+else if lineage_pango_lineage in('LP.8','LP.8.1','LP.1','LP.4','LP.8.1.1','LP.5','LP.8.1.2') then lineage1 = "LP.8.1";
+
+else if lineage_pango_lineage in('LF.7','LF.7.3','LF.7.4','LF.7.2.1','LF.7.6.1','LF.7.1','LF.7.1.2') then lineage1 = "LF.7";
+
+else if lineage_pango_lineage in('XEK','XEK.1') then lineage1 = "XEK";
+else if lineage_pango_lineage in('XEQ') then lineage1 = "XEQ";
+
+else if lineage_pango_lineage in('XEC','XEC.1','XEC.2','XEC.4','XEC.12','XEC.2.1','XEC.3','XEC.6','XEC.8','XEC.9','XEC.11','XEC.2.2','XEC.14') then lineage1 = "XEC";
+else lineage1=lineage_PANGO_lineage;
+run;
+
+
+PROC FREQ DATA= ngs2 ; 
+TABLES collection_date ;
+WHERE collection_date ge '29MAR2025'd; ;
+RUN ;
+
+proc freq data=ngs2; 
+         tables lineage1; 
+run;
+
+
+data qa (keep=lineage1 lineage_PANGO_lineage);
+set ngs2;
+where lineage1 ne lineage_PANGO_lineage;
+run;
+proc freq data=qa;
+  table lineage1;
+  run;
+proc freq data=ngs2;
+table lineage1*lineage_PANGO_lineage/nocol nopercent norow;
+run;
+
+/**************************************************************************************
+                 Creating variables may need for Tableau
+***************************************************************************************/
+Data ngs3;
+set ngs2;
+ 
+/**part of old code**/
+Collect_seq_int=intck ('day', collection_date, Date_received_by_CDC); *Collection to sequencing report interval;
+Collect_week_int=intck ('week', collection_date, Date_received_by_CDC); *Collection to sequencing report interval;
+Collect_year_int=intck ('year', collection_date, Date_received_by_CDC); *Collection to sequencing report interval;
+Collect_week=week(collection_date);
+Collect_year=year(collection_date); *Collection to sequencing report interval;
+Collect_WeekYear= cats(Collect_year,Collect_week);
+ 
+if lineage_PANGO_lineage in ("B.1.1.7", "B.1.351", "B.1.617.2", "AY.1", "AY.2", "P.1") then VOC=1; else VOC=0; /**variants of concern**/
+if lineage_PANGO_lineage in ("B.1.525", "B.1.526", "B.1.617.1", "B.1.617.3", "C.37",'JN.1','MC.1','MC.10.1','MC.28.1','JN.4') then VOI=1; else VOI=0; /**variants of interest**/
+ 
+if 0 <= age <= 19 then age_group = "0-19 years";
+else if 20 <= age <= 29 then age_group = "20-29 years";
+else if 30 <= age <= 39 then age_group = "30-39 years";
+else if 40 <= age <= 49 then age_group = "40-49 years";
+else if 50 <= age <= 59 then age_group = "50-59 years";
+else if 60 <= age <= 69 then age_group = "60-69 years";
+else if 70 <= age <= 79 then age_group = "70-79 years";
+else if age >= 80 then age_group = "80+ years";
+else age_group = " ";
+ 
+/***CDC Website also WHO website**/
+if lineage1 in ("B.1.1.7") then who="Alpha "; /*, "Q.1", "Q.2", "Q.3"*/
+else if lineage1 in ("B.1.351") then who="Beta";
+else if lineage1 in ("P.1") then who="Gamma"; /**"P.8" **/
+else if lineage1 in ("AY.1", "AY.2", "B.1.617.2" ) then who="Delta";
+else if lineage1 in ( "B.1.427", "B.1.429") then who="Epsilon" ;
+else if lineage1 = "B.1.525" then who="Eta";
+else if lineage1 = "B.1.526" then who="Iota";
+else if lineage1 = "B.1.617.1" then who="Kappa";
+else if lineage1 = "C.37" then who="Lambda";
+else if lineage1 in ("B.1.621", "B.1.621.1") then who = "Mu";
+else if lineage1 in ("B.1.617.3", "B.1.1.194") then who="N/A";
+else if lineage1 in ("CH.1.1", "XBB", 'JD.1.1','JN.1','MC.1','MC.10.1','MC.28.1',
+'KP.1.1','KP.2','KP.3.1.1','KP.3','LB.1','LP.8.1','LF.7','KS.1','XEC','XEK','XEQ',"B.1.1.529","BA.1", "BA.2",'BA.2.86', "BA.2.12.1",
+"BA.2.75", "BA.4", "BA.5", "BQ.1", "BQ.1.1", "BF.7","BN.1", "BQ.2") then who="Omicron";
+else if lineage1 = "P.2" then who = "Zeta";
+ 
+else who = "Other ";
+ 
+if lineage1 in ("B.1.1.7", "B.1.351", "B.1.617.2", "AY.1", "AY.2", "P.1") then type="VOC ";
+else if lineage1 in ("B.1.525", "B.1.526", "B.1.617.1", "B.1.617.3", "C.37", "B.1.427", "B.1.429","P.2",
+'JN.1','MC.1','MC.10.1','MC.28.1','KP.1.1','KP.2','KP.3','KP.3.1.1','LB.1','LF.7','XEC','XEK','XEQ','LP.8.1') then type="VOI " ;
+else type = " ";
+ 
+if lineage1 in ("B.1.1.7", "B.1.351","P.1", "B.1.427", "B.1.429" ,"B.1.525", "B.1.526", "B.1.617.1","B.1.617.3", "P.2", "B.1.621", "B.1.621.1", "B.1.617.2",
+"AY.1", "AY.2","XBB",'JD.1.1', "CH.1.1",'BA.2.86'
+'GE.1') then type="VBM ";/**Variants being monitored**/
+else if lineage1 in ("B.1.1.529","BA.1", "BA.2", "BA.2.12.1", "BA.4", "BA.5", "BF.7","BN.1", "BQ.1", "BQ.1.1",
+"BA.2.75", "BA.2.12.1") then type = "VOC ";
+else if lineage1 in ('JN.1','MC.1','MC.10.1','MC.28.1','KP.1.1','KP.2','KP.3.1.1','KP.3','LB.1','LF.7','XEC','XEK','XEQ','LP.8.1') then type = "VOI ";
+else type1 = " ";
+ 
+/**create end of week for Tableau dashboard**/
+collect_biweek2=intnx('week2',collection_date,0,'beginning');
+collect_biweek3=intnx('week2',collection_date,0,'end');
+biweekly=intnx("week", collection_date, 2);
+collect_weekly=intnx('week1',collection_date,0,'end'); /**week ending**/
+collect_weekly1=intnx('week1',collection_date,0,'beginning');
+ 
+format Collect_biweek2 mmddyy10. collect_biweek3 mmddyy10. biweekly mmddyy10. collect_weekly mmddyy10. collect_weekly1 mmddyy10.;
+run;
+PROC FREQ DATA= ngs3;
+table type;
+RUN;
+data qa (keep=collection_date collect_weekly collect_weekly1);
+set ngs3;
+run;
+/********************************************************************************************************************************************
+                  Combining Zip and seq File; file is same as Fips file
+                 This was part of old code, don't know if we even need this
+                 but kept for later. 9.3.21 I QA'd zip file and there were 4 missing zips I added to our zip file and recreated a new zip_final file
+                 The 4 missing zips were not a part fo the 174 diffence below the original code used a different zip file. located at fips.
+*********************************************************************************************************************************************/
+proc sql ;
+create table ngs4 as select
+a.ZipCode,  a.PHR ,  b.*
+from seq.zip_final a 
+inner join ngs3 b
+on a.ZipCode=b.zip;
+quit;
+
+/*************************************************************************************************************************
+                  Need to group lineages into Other category verify with CDC and WHO website that who and type have not changed;
+                  Better for Tableau worksheet
+****************************************************************************************************************************/ 
+
+***********************************************************************************************************/
+/**Need to verify if all data is in for the week ending variable to report in Tableau viz***/
+proc freq data=ngs4;
+
+/**July 31st, 2022 as of 11.08.22 to match the CDC website: https://covid.cdc.gov/covid-data-tracker/#variant-proportions**/
+proc freq data=ngs4;
+table collect_weekly;
+where collect_weekly >= '29MAR2025'd;
+run;
+proc freq data=ngs4; tables who*lineage1/norow nocol nopercent; where who="Omicron"; 
+run;
+/*n=549 for public facing*/
+/*n=251,311 for internal*/
+data ngs5;
+set ngs4;
+if who ne "Other" then lineage = lineage1;
+else if who = "Other" then lineage="Other";
+/*For public facing use the date restriction below*/
+where '07DEC2024'd <=collect_weekly <= '29MAR2025'd;
+/*For internal dashboard use date restriction 01/01/21 to current date*/
+/* where '01JAN2021'd <=collect_weekly <= '24MAR2024'd ;*/
+run;
+data qa (keep=who lineage1 lineage lineage_PANGO_lineage);
+ set ngs5;
+ run;
+data ngs6;
+set ngs5;
+if find(lineage_PANGO_lineage, "24C") then DELETE ;
+if find(lineage_PANGO_lineage, "24V") then DELETE ;
+if find(lineage_PANGO_lineage, "SHS") then DELETE ;
+run;
+
+PROC FREQ DATA= ngs6 ;
+TABLE lineage_PANGO_lineage ;
+WHERE who= "Other" ; 
+RUN; 
+
+proc freq data=ngs6;
+table collect_weekly*who/nocol nopercent norow;
+run;
+
+/******************************************************************************************
+                
+**********************************************************************************************/
+data ngs7;
+set ngs6;
+if who = 'Other' then rank =1;
+else if who = 'Alpha' then rank=2;
+else if who = 'Beta' then rank =3;
+else if who = 'Delta' then rank=4;
+else if who = 'Epsilon' then rank=5;
+else if who = 'Eta' then rank= 6;
+else if who = 'Gamma' then rank=7;
+else if who = 'Iota' then rank= 8;
+else if who = 'Kappa' then rank=9;
+/*else if who = 'Lambda' then rank=10;*/
+else if who = 'Mu' then rank =10;
+else if who = 'Omicron' then rank=11;
+else if who = 'Zeta' then rank=12;
+else if who = "N/A" then rank =13;
+run;
+
+/*Look at what lineages are present in the final data set and compare to expected CDC lineages*/ 
+PROC FREQ DATA= ngs7 ;
+table lineage; 
+RUN; 
+
+/*********************************************
+        Export SAS data for Tableau
+**********************************************/
+*For public facing dashboard download ngs_cum sas file and copy it to correct S drive location ; 
+data seq.ngs_cum;
+set ngs7;
+run;
+*For internal dashboard export as excel file and download ;
+proc export data= seq.ngs_cum
+    outfile="/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Kinjal Patel_Folder/Public and internal Dashboard Update/Data/Internal_Dashboard.xlsx"
+    dbms=xlsx replace;
+
+run;
