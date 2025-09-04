@@ -1,0 +1,377 @@
+******/ Fatality Reconciliation /*******
+		Created 1/16/2023
+		By: Caitlynn Meek 
+		Last updated: ##/##/2025
+***************************************;
+libname snow odbc dsn=dhub user= "jane.doe@domain.gov"
+password="{SAS003}58E705E9D6482FD75AB79C70D003385B7C21"
+schema="IDDI_DHUB" ;
+
+cas mySession sessopts=(caslib=casuser timeout=1800 locale="en_US");
+%let snow= snow ;
+libname dat cas caslib="&dat"  datalimit=all;
+
+******/ Import CHS linelist /*******; 
+libname dshs '/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Data ' ;
+RUN; 
+
+PROC IMPORT DATAFILE= '/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Data/CHS_12.18.24.xlsx'
+	DBMS=XLSX 
+	OUT= dshs.CHS 
+	REPLACE ;
+	GETNAMES=YES ;
+	
+RUN;
+
+PROC CONTENTS Data= dshs.CHS ; 
+RUN ;
+PROC PRINT data= dshs.CHS (OBS=5 ); 
+RUN ; 
+******/ Deduplicate CHS linelist /*******; 
+*/ No duplicates /* ; 
+PROC SORT DATA= dshs.CHS 
+OUT= CHS1
+NODUPKEY 
+DUPOUT=dCHS1; 
+BY STATE_FILE_NUMBER ;
+RUN;
+PROC CONTENTS Data= CHS1; 
+RUN ;
+PROC PRINT data= CHS1 (OBS=5 ); 
+RUN ; 
+******/ rename CHS variables /*******; 
+DATA CHS2 ; 
+Set CHS1 ; 
+RENAME BIRTH_DT= CHS_DOB ;
+RENAME DEATH_DT= CHS_DEATH_DT ;
+RENAME DEATH_OCCURRENCE_COUNTY= CHS_DEATH_COUNTY ;
+RENAME NAME_FIRST= CHS_FIRST ;
+RENAME NAME_LAST= CHS_LAST ;
+RENAME RES_ADDRESS_CITY= CHS_CITY ;
+RENAME RES_ADDRESS_COUNTY= CHS_COUNTY ; 
+RENAME RES_ZIP_CODE= CHS_ZIP ;
+RENAME SEX= CHS_SEX ;
+RUN ; 
+
+******/ Create final CHS dataset /*******; 
+
+DATA dshs.CHS3 ; 
+
+length CHS_FIRST $50 ; 
+length CHS_LAST $50 ; 
+
+
+SET CHS2 ; 
+
+FORMAT CHS_DEATH_DT MMDDYY10. ;
+INFORMAT CHS_DEATH_DT DATE9. ;
+
+CHS_FIRST= STRIP(CHS_FIRST) ;
+CHS_FIRST= UPCASE(COMPRESS(CHS_FIRST,,'ka'));
+
+CHS_LAST= STRIP(CHS_LAST) ;
+CHS_LAST= UPCASE(COMPRESS(CHS_LAST,,'ka'));
+
+
+KEEP CHS_FIRST CHS_LAST CHS_DOB CHS_DEATH_DT CHS_DEATH_COUNTY CHS_CITY CHS_COUNTY CHS_ZIP CHS_SEX STATE_FILE_NUMBER RECORDED_DT  ;
+RUN ; 
+ 
+PROC SORT DATA= dshs.CHS3 ;
+BY CHS_FIRST CHS_LAST CHS_DOB;
+RUN;
+PROC CONTENTS Data= dshs.CHS3 ; 
+RUN ;
+PROC PRINT data= dshs.CHS3 (OBS=5 ); 
+RUN ; 
+
+******/ Pull out most recent cases & make CHS final dataset /*******; 
+DATA  dshs.CHS_final  ;
+SET dshs.chs3 ;
+
+*Record_dt= input(RECORDED_DT, yymmdd10.) ;
+*FORMAT Record_dt mmddyy10. ; 
+
+*IF Record_dt ge '15OCT2024'd THEN OUTPUT dshs.recents ; *Update to last week tuesday ;
+*ELSE OUTPUT dshs.CHS_final ; 
+
+*DROP RECORDED_DT ;
+RUN ;
+
+PROC CONTENTS Data= dshs.recents ; 
+RUN ;
+PROC PRINT data= dshs.recents  (OBS=5 ); 
+RUN ;
+******/ Import NEDSS linelist /******; 
+
+DATA dshs.NEDSS  ;
+SET snow.t_nedss_covid_case 
+(keep=CASE_RPT_MMWR_YR CALC_PATIENT_STATE INV_LOCAL_ID LAB_ASSOCIATED_LAB_ID PATIENT_LOCAL_ID CASE_STATUS PATIENT_FIRST_NAME PATIENT_LAST_NAME PATIENT_DOB PATIENT_DECEASED_DT DIE_FRM_ILLNESS_IND PATIENT_DECEASED_IND INV_LOCAL_ID ) ; 
+where case_status in ("C","P") and CASE_RPT_MMWR_YR >= '2020' and CASE_RPT_MMWR_YR <= '2024' and (CALC_PATIENT_STATE in ('TX', '  ') or LENGTH(CALC_PATIENT_STATE) ^= 2) ;
+run;
+PROC CONTENTS Data= dshs.NEDSS ; 
+RUN ;
+
+******/ Deduplicate NEDSS linelist /******; 
+*/  Change variable? /* ;
+PROC SORT DATA= dshs.NEDSS 
+OUT= NEDSS1
+NODUPKEY ;
+BY INV_LOCAL_ID;
+RUN;
+
+PROC CONTENTS Data= dshs.NEDSS; 
+RUN ;
+
+******/ keep only C & P cases/*****;
+DATA NEDSS3 ; 
+SET NEDSS1 ;
+WHERE CASE_STATUS= "C" or CASE_STATUS= "P"; 
+RUN ; 
+
+******/ Rename NEDSS variables/******; 
+DATA NEDSS4 ; 
+SET NEDSS3 ; 
+RENAME PATIENT_FIRST_NAME= NEDSS_FIRST ;
+RENAME PATIENT_LAST_NAME= NEDSS_LAST ;
+RENAME PATIENT_DOB= NEDSS_DOB ;
+RENAME PATIENT_DECEASED_DT= NEDSS_DEATH_DT ;
+RENAME PATIENT_STATE= NEDSS_STATE ;
+RENAME PATIENT_ZIP=NEDSS_ZIP ;
+RENAME PATIENT_COUNTY= NEDSS_COUNTY ;
+RENAME PATIENT_LOCAL_ID= NEDSS_ID ;
+RUN ; 
+PROC CONTENTS Data= NEDSS4; 
+RUN ;
+
+******/ Clean Names /******; 
+DATA dshs.NEDSS_final ; 
+SET NEDSS4 ; 
+
+FORMAT NEDSS_DOB MMDDYY10. ;
+FORMAT NEDSS_DEATH_DT MMDDYY10. ;
+
+NEDSS_FIRST= STRIP(NEDSS_FIRST);
+NEDSS_FIRST= UPCASE(COMPRESS(NEDSS_FIRST,,'ka')); 
+
+
+NEDSS_LAST= STRIP(NEDSS_LAST) ;
+NEDSS_LAST= UPCASE(COMPRESS(NEDSS_LAST,,'ka'));
+
+KEEP NEDSS_ID NEDSS_FIRST NEDSS_LAST NEDSS_DOB NEDSS_DEATH_DT DIE_FRM_ILLNESS_IND NEDSS_STATE NEDSS_ZIP INV_LOCAL_ID PATIENT_DECEASED_IND;
+RUN ; 
+PROC SORT DATA= dshs.NEDSS_final ;
+BY NEDSS_FIRST NEDSS_LAST NEDSS_DOB;
+RUN;
+PROC CONTENTS Data= dshs.NEDSS_final; 
+RUN ;
+PROC CONTENTS Data= dshs.CHS_final; 
+RUN ;
+PROC PRINT data= dshs.NEDSS_final (OBS=12 ); 
+RUN ; 
+PROC PRINT data= dshs.CHS_final (OBS=5 ); 
+RUN ; 
+
+
+******/ Combine datasets for fatality corrections /******; 
+PROC SQL ;
+CREATE TABLE dshs.combined2 AS
+SELECT * 
+FROM dshs.CHS_final as a
+INNER JOIN dshs.NEDSS_final as b
+	ON  a.CHS_FIRST = b.NEDSS_FIRST AND a.CHS_LAST = b.NEDSS_LAST AND b.NEDSS_DOB = a.CHS_DOB 
+ORDER BY CHS_DEATH_DT desc ;
+QUIT ; 
+
+PROC SQL ;
+CREATE TABLE dshs.combined_recents AS
+SELECT * 
+FROM dshs.recents as a
+INNER JOIN dshs.NEDSS_final as b
+	ON  a.CHS_FIRST = b.NEDSS_FIRST AND a.CHS_LAST = b.NEDSS_LAST AND b.NEDSS_DOB = a.CHS_DOB 
+ORDER BY CHS_DEATH_DT desc ;
+QUIT ;
+
+PROC CONTENTS Data= dshs.combined2 ; 
+RUN ;
+PROC PRINT data= dshs.combined2 (OBS=5 ); 
+RUN ;
+PROC FREQ data= dshs.combined2 ; 
+TABLES DIE_FRM_ILLNESS_IND;
+RUN ; 
+
+PROC SORT DATA= dshs.combined2
+OUT= dshs.combined2
+NODUPKEY 
+DUPOUT=dcombined; 
+BY INV_LOCAL_ID ;
+RUN;
+
+PROC SORT DATA= dshs.combined_recents
+OUT= dshs.combined_recents
+NODUPKEY 
+DUPOUT=drecents; 
+BY INV_LOCAL_ID ;
+RUN ;
+
+PROC CONTENTS Data= dshs.combined2 ; 
+RUN ;
+PROC FREQ DATA= dshs.combined2 ; 
+TABLES DIE_FRM_ILLNESS_IND PATIENT_DECEASED_IND; 
+RUN ;
+******/Create incongruent death date indicator /******; 
+DATA combined3 ; 
+SET dshs.combined2 ;
+
+IF DIE_FRM_ILLNESS_IND= 'Y' then ind= 0 ; *missing/N/Unk 1 ;
+else ind= 1 ;
+
+IF NEDSS_DEATH_DT= ' ' then ind2= 1 ; *missing values 1 ;
+else ind2= 0 ; 
+
+IF NEDSS_DEATH_DT ne CHS_DEATH_DT then ind3= 1 ; 
+else  ind3= 0 ; 
+
+IF PATIENT_DECEASED_IND= 'Y' then ind4= 0; *missing/N/Unk 1 ;
+else ind4= 1 ; 
+
+IF PATIENT_DECEASED_IND ne DIE_FRM_ILLNESS_IND then ind5= 1 ; 
+else ind5= 0 ; 
+
+RUN ; 
+PROC SORT DATA= combined3
+OUT= combined3
+NODUPKEY ; 
+BY NEDSS_ID ;
+RUN;
+
+PROC CONTENTS Data= combined3 ; 
+RUN ;
+PROC FREQ DATA= combined3 ; 
+TABLES ind5 DIE_FRM_ILLNESS_IND PATIENT_DECEASED_IND; 
+RUN ;
+******/ Export cases with mismatched death info/******; 
+DATA dshs.combined_almost ;
+RETAIN NEDSS_FIRST NEDSS_LAST NEDSS_DOB INV_LOCAL_ID NEDSS_ID LAB_ASSOCIATED_LAB_ID CHS_DEATH_DT NEDSS_DEATH_DT DIE_FRM_ILLNESS_IND PATIENT_DECEASED_IND Received_dt ind ind2 ind3 ind4 ind5 ;
+SET combined3 ; 
+WHERE ind=1 or ind2=1 or ind3= 1 or ind4=1 or ind5= 1; 
+KEEP NEDSS_FIRST NEDSS_LAST NEDSS_DOB INV_LOCAL_ID NEDSS_ID LAB_ASSOCIATED_LAB_ID CHS_DEATH_DT NEDSS_DEATH_DT DIE_FRM_ILLNESS_IND PATIENT_DECEASED_IND Received_dt INV_LOCAL_ID ind ind2 ind3 ind4 ind5;
+RUN ; 
+
+
+PROC CONTENTS Data= dshs.combined_almost ; 
+RUN ;
+PROC FREQ DATA= dshs.combined_almost  ; 
+TABLES DIE_FRM_ILLNESS_IND ; 
+RUN ;
+
+******/Remove cases already worked on *****/ ;
+PROC SORT DATA= dshs.combined_almost
+OUT= dshs.combined_almost ;
+BY INV_LOCAL_ID;
+RUN ;
+
+PROC IMPORT DATAFILE= '/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Data/Completed_12.18.24.xlsx'
+	DBMS=XLSX 
+	OUT= completed 
+	REPLACE ;
+	GETNAMES=YES ;
+	
+RUN;
+
+DATA completed2 ; 
+SET completed ; 
+RENAME INV_LOCAL_ID= INV_ID ; 
+RUN ;
+
+PROC SORT DATA= completed2
+OUT= completed2 ;
+BY INV_ID;
+RUN ;
+
+PROC SQL ;
+CREATE TABLE dshs.combined_final AS
+SELECT * 
+FROM dshs.combined_almost as a
+LEFT JOIN completed2 as b
+	ON  a.INV_LOCAL_ID= b.INV_ID
+WHERE b.INV_ID IS NULL 
+ORDER BY CHS_DEATH_DT desc ;
+QUIT ; 
+
+
+******/Final Exports*****/ ;
+proc export data= dshs.combined_final
+     outfile="/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Exports/Case Assignments/Fatality_Corrections_12.18.2024.xlsx" 
+     dbms=xlsx 
+     replace ; *Change date in file name ! ;
+run;
+
+proc export data= dshs.combined_recents
+     outfile="/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Exports/Weekly Fatalities/Recent_fatalities_10.29.2024.xlsx" 
+     dbms=xlsx 
+     replace ; *Change date in file name ! ;
+run;
+
+
+
+proc export data= dshs.combined_almost
+     outfile="/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Exports/Case Assignments/Fatality_Corrections_test.xlsx" 
+     dbms=xlsx 
+     replace ; *Change date in file name ! ;
+run;
+
+****/Fatality Correction QA/**** ;
+libname snow odbc dsn=dhub user= "caitlynn.meek@dshs.texas.gov"
+password="{SAS003}58E705E9D6482FD75AB79C70D003385B7C21"
+schema="IDDI_DHUB" ;
+
+cas mySession sessopts=(caslib=casuser timeout=1800 locale="en_US");
+%let snow= snow ;
+libname dat cas caslib="&dat"  datalimit=all;
+
+****/Import completed CAS numbers/**** ;
+libname dshs '/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Data ' ;
+RUN; 
+
+PROC IMPORT DATAFILE= '/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Data/Completed_10.24.24.xlsx'
+	DBMS=XLSX 
+	OUT= dshs.done 
+	REPLACE ;
+	GETNAMES=YES ;
+	
+RUN;
+
+****/Import last fatality file/**** ;
+PROC IMPORT DATAFILE= '/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Exports/Case Assignments/Fatality_Corrections_10.29.2024.xlsx'
+	DBMS=XLSX 
+	OUT= dshs.cases 
+	REPLACE ;
+	GETNAMES=YES ;
+	
+RUN;
+
+****/Rename investigation variable/**** ;
+DATA cases ; 
+SET dshs.cases ; 
+RENAME INV_LOCAL_ID= INV_ID ; 
+RUN ;
+
+****/Combine the two data sets and see if any completed cases are still present in NEDSS/**** ;
+PROC SQL ;
+CREATE TABLE dshs.check AS
+SELECT * 
+FROM dshs.done AS a
+INNER JOIN cases AS b
+	ON a.INV_LOCAL_ID= b.INV_ID ;
+QUIT ; 
+PROC FREQ DATA= dshs.check ; 
+TABLES ind ; 
+RUN ; 
+ 
+
+****/Export Cases that need corrections/**** ; 
+proc export data= dshs.check
+     outfile="/mnt/viya-share/data/lids-idps/eaidu-coronavirus/_content/Reports/Fatality Corrections & QA/Exports/Needs_corrections _11.11.24.xlsx" 
+     dbms=xlsx  
+     replace ; *Change date in file name ! ;
+run;
