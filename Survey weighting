@@ -1,0 +1,282 @@
+LIBNAME survey 'C:\Users\Student\Desktop\Survey Design' ;
+
+/* Import the data set */
+PROC IMPORT 
+	DATAFILE= 'C:\Users\Student\Desktop\Survey Design\Clean.xlsx'
+	DBMS= xlsx
+	OUT= survey.sample1 ; 
+	GETNAMES= yes ;
+RUN ;
+
+/* Select those that passed the screener questions */
+PROC SQL ; 
+	CREATE TABLE survey.sample2 AS
+	SELECT *
+	FROM survey.sample1 
+	WHERE Screen1 = "Yes" and Screen2 = "Yes"
+;
+QUIT ;
+
+/* Make stuff numeric */ 
+DATA survey.sample (DROP= PhyA_Freq1 PhyA_Days1 PhyA_Stren1 PhyA_Mode1 
+PhyA_Pref1 PhyA_Acti1 PhyA_Acti_other1 PhyA_Imp1 Stress_Tired1 
+Stress_Head1 Stress_Irritate1 Stress_Sleep1 Stress_Tense1
+Stress_Enjoy1 Stress_Freq1 Stress_Dead1 Stress_Accom1 
+Stress_Control1 Stress_Finan1); 
+	SET survey.sample2 (RENAME= 
+		(PhyA_Freq = PhyA_Freq1
+		PhyA_Days = PhyA_Days1
+		PhyA_Stren = PhyA_Stren1 
+		PhyA_Mode = PhyA_Mode1
+		PhyA_Pref = PhyA_Pref1
+		PhyA_Acti = PhyA_Acti1
+		PhyA_Acti_other = PhyA_Acti_other1
+		PhyA_Imp = PhyA_Imp1
+		Stress_Tired = Stress_Tired1
+		Stress_Head = Stress_Head1 
+		Stress_Irritate = Stress_Irritate1
+		Stress_Sleep = Stress_Sleep1
+		Stress_Tense = Stress_Tense1	
+		Stress_Enjoy = Stress_Enjoy1
+		Stress_Freq = Stress_Freq1
+		Stress_Dead = Stress_Dead1
+		Stress_Accom = Stress_Accom1 
+		Stress_IrrControl = Stress_IrrControl1
+		Stress_Control = Stress_Control1
+		Stress_Finan = Stress_Finan1) );
+
+IF PhyA_Freq1= "0 times a week" THEN PhyA_Freq= 0 ; 
+ELSE IF PhyA_Freq1= "1-2 times a week" THEN PhyA_Freq= 1 ; 
+ELSE IF PhyA_Freq1= "3-4 times a week" THEN PhyA_Freq= 2 ; 
+ELSE IF PhyA_Freq1= "4+ times a week" THEN PhyA_Freq= 3 ; 
+
+PhyA_Days = input(PhyA_Days1, 2.);
+
+IF PhyA_Stren1 = "0 times a week" THEN PhyA_Stren= 0 ; 
+ELSE IF PhyA_Stren1 = "1-2 times a week" THEN PhyA_Stren= 1 ; 
+ELSE IF PhyA_Stren1 = "3-4 times a week" THEN PhyA_Stren= 2 ; 
+ELSE IF PhyA_Stren1 = "4+ times a week" THEN PhyA_Stren= 3 ; 
+
+IF PhyA_Mode1 = "0 times a week" THEN PhyA_Mode= 0 ; 
+ELSE IF PhyA_Mode1 = "1-2 times a week" THEN PhyA_Mode= 1 ; 
+ELSE IF PhyA_Mode1 = "3-4 times a week" THEN PhyA_Mode= 2 ; 
+ELSE IF PhyA_Mode1 = "4+ times a week" THEN PhyA_Mode= 3 ; 
+
+IF PhyA_Pref1= "Alone" THEN PhyA_Pref= 1 ; 
+ELSE IF PhyA_Pref1= "A combination of both alone and groups" THEN PhyA_Pref= 2 ; 
+ELSE IF PhyA_Pref1= "In groups" THEN PhyA_Pref= 3 ; 
+ELSE IF PhyA_Pref1= "I do not workout" THEN PhyA_Pref= 0 ; 
+
+*Do something with PhyA_Acti & PhyA_Acti_other; 
+
+PhyA_Imp= input(PhyA_Imp1,2.);
+
+IF Stress_Tired1= "No" THEN Stress_Tired= 0 ;
+ELSE IF Stress_Tired1= "Yes" THEN Stress_Tired= 1 ; 
+
+IF Stress_Head1= "No" THEN Stress_Head= 0 ;
+ELSE IF Stress_Head1= "Yes" THEN Stress_Head= 1 ;
+
+IF Stress_Irritate1= "No" THEN Stress_Irritate= 0 ;
+ELSE IF Stress_Irritate1= "Yes" THEN Stress_Irritate= 1 ;
+
+IF Stress_Sleep1= "No" THEN Stress_Sleep= 0 ;
+ELSE IF Stress_Sleep1= "Yes" THEN Stress_Sleep= 1 ;
+
+IF Stress_Tense1= "No" THEN Stress_Tense= 0 ;
+ELSE IF Stress_Tense1= "Yes" THEN Stress_Tense= 1 ;
+
+IF Stress_Enjoy1= "No" THEN Stress_Enjoy= 0 ;
+ELSE IF Stress_Enjoy1= "Yes" THEN Stress_Enjoy= 1 ;
+
+IF Stress_Freq1 = "0 times a week" THEN Stress_Freq= 0 ; 
+ELSE IF Stress_Freq1 = "1-2 times a week" THEN Stress_Freq= 1 ; 
+ELSE IF Stress_Freq1 = "3-4 times a week" THEN Stress_Freq= 2 ; 
+ELSE IF Stress_Freq1 = "4+ times a week" THEN Stress_Freq= 3 ; 
+
+IF Stress_Dead1 = "Never" THEN Stress_Dead= 0  ;
+ELSE IF Stress_Dead1 = "Sometimes" THEN Stress_Dead= 1 ; 
+ELSE IF Stress_Dead1 = "Often" THEN Stress_Dead= 2 ;
+ELSE IF Stress_Dead1 = "Always" THEN Stress_Dead= 3 ;
+
+IF Stress_Accom1 = "0 times a week" THEN Stress_Accom= 0 ; 
+ELSE IF Stress_Accom1 = "1-2 times a week" THEN Stress_Accom= 1 ; 
+ELSE IF Stress_Accom1 = "3-4 times a week" THEN Stress_Accom= 2 ; 
+ELSE IF Stress_Accom1 = "4+ times a week" THEN Stress_Accom= 3 ; 
+
+IF Stress_IrrControl1 = "0 times a week" THEN Stress_IrrControl= 0 ; 
+ELSE IF Stress_IrrControl1 = "1-2 times a week" THEN Stress_IrrControl= 1 ; 
+ELSE IF Stress_IrrControl1 = "3-4 times a week" THEN Stress_IrrControl= 2 ; 
+ELSE IF Stress_IrrControl1 = "4+ times a week" THEN Stress_IrrControl= 3 ; 
+
+IF Stress_Control1 = "Never" THEN Stress_Control= 0  ;
+ELSE IF Stress_Control1 = "Sometimes" THEN Stress_Control= 1 ; 
+ELSE IF Stress_Control1 = "Often" THEN Stress_Control= 2 ;
+ELSE IF Stress_Control1 = "Always" THEN Stress_Control= 3 ;
+
+IF Stress_Finan1 = "Never" THEN Stress_Finan= 0  ;
+ELSE IF Stress_Finan1 = "Sometimes" THEN Stress_Finan= 1 ; 
+ELSE IF Stress_Finan1 = "Often" THEN Stress_Finan= 2 ;
+ELSE IF Stress_Finan1 = "Always" THEN Stress_Finan= 3 ;
+
+IF Demo_Gender= "Male" or Demo_Gender= "male" or Demo_Gender= "M" THEN Gender= 0 ; *male is reference category; 
+ELSE IF Demo_Gender= "Female" or Demo_Gender= "female" or Demo_Gender= "cis-female" THEN Gender= 1 ;
+
+IF Demo_Age= "25 years old and older" THEN Age= 1 ; 
+ELSE IF Demo_Age= "Under 25 years old" THEN Age= 0; *younger age is reference category ;
+
+IF Demo_Int= "No" THEN international= 0 ; *not international is reference ; 
+ELSE IF Demo_Int= "Yes" THEN international= 1 ; 
+
+IF Demo_degree= "MPH" THEN degree= 0 ; *MPH is reference ; 
+ELSE IF Demo_degree= "PhD" THEN degree= 1 ; 
+ELSE IF Demo_degree= "MS" THEN degree= 2 ; 
+ELSE IF Demo_degree= "MHA" THEN degree= 3 ; 
+
+IF Demo_degree= "MPH" THEN degree_cat= 0 ; 
+ELSE IF Demo_degree ne "MPH" THEN degree_cat= 1 ; 
+
+IF Demo_race= "White" THEN race= 0 ; *white is reference ;
+ELSE IF Demo_race= "Asian or Pacific Islander" THEN race= 1 ; 
+ELSE IF Demo_race= "Black or African-American" THEN race= 2 ; 
+ELSE IF Demo_race= "Hispanic" or Demo_race= "Latino/a" THEN race= 3 ; 
+ELSE IF Demo_race= "White,Hispanic" or Demo_race= "White,Hispanic,Latino/a" THEN race= 4;
+ELSE IF Demo_race= "Not Listed" THEN race= 4 ; 
+
+
+Stress_Score= sum(Stress_Tired, Stress_Head, Stress_Irritate, Stress_Sleep,
+Stress_Tense, Stress_Enjoy, Stress_Freq, Stress_Dead, Stress_Accom, Stress_IrrControl, Stress_Control);
+*Higher values= more stressed ;
+/*survey weights for race*/ 
+IF race= 0 THEN w= 3.81 ; 
+ELSE IF race= 1 THEN w= 4.45 ; 
+ELSE IF race= 2 THEN w= 1.45 ; 
+ELSE IF race= 3 THEN w= 3.12 ; 
+ELSE IF race= 4 THEN w= 1.56 ; 
+/* survey weights for race_cat*/ 
+IF race_cat= 0 THEN w1= 3.488 ; 
+ELSE IF race_cat= 1 THEN w1= 2.106 ;
+	
+RUN ; 
+
+		
+RUN ; 
+PROC FREQ DATA= Survey.sample ; 
+	TABLES Stress_Freq ; 
+RUN ;
+
+PROC EXPORT DATA= survey.sample  
+	 OUTFILE= "C:\Users\Student\Desktop\Survey Design\sample.xlsx" 
+            DBMS= xlsx REPLACE;
+			    PUTNAMES=YES;
+RUN ;
+
+	
+
+/* Get some descriptive stats */ 
+/*Frequency distributions for categorical variables*/
+PROC FREQ DATA= Survey.sample ; 
+	TABLES PhyA_Freq / plots(only)=freqplot(scale=percent); 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES Stress_Freq / plots(only)=freqplot(scale=percent); 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES international / plots(only)=freqplot(scale=percent); 
+RUN ;
+/*Means for continuous variables*/ 
+PROC MEANS DATA= Survey.sample ; 
+	VAR Stress_Score ; 
+RUN ; 
+
+/*Bivariate analysis */ 
+PROC FREQ DATA= Survey.sample ; 
+	TABLES degree*Stress_Freq / fisher ;*expected chisq norow nopercent ; 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES international*Stress_Freq / fisher ;*expected chisq norow nopercent ; 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES race*Stress_Freq / fisher ;*expected chisq norow nopercent ; 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES age*Stress_Freq / fisher ; *expected chisq norow nopercent ; 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES PhyA_Freq*Stress_Freq /fisher ; *expected chisq norow nopercent ; 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES PhyA_Stren*Stress_Freq / fisher ; *expected chisq norow nopercent ; 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES PhyA_Mode*Stress_Freq / fisher ; *expected chisq norow nopercent ; 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES PhyA_Pref*Stress_Freq / fisher ; *expected chisq norow nopercent ; 
+RUN ;
+PROC FREQ DATA= Survey.sample ; 
+	TABLES PhyA_Imp*Stress_Freq / fisher ; *expected chisq norow nopercent ; 
+RUN ;
+/*Linear Regression*/ 
+PROC SURVEYREG DATA= Survey.sample ;
+	WEIGHT w1 ;
+	MODEL Stress_Score= age race_cat degree_cat PhyA_Freq PhyA_Pref PhyA_Stren PhyA_Mode PhyA_Imp ; 
+RUN ;
+
+
+
+/*Internal reliability*/ 
+PROC CORR DATA= survey.sample nosimple nocorr nomiss alpha;
+	VAR PhyA_Freq PhyA_Days PhyA_Stren PhyA_Mode
+PhyA_Pref PhyA_Imp Stress_Tired 
+Stress_Head Stress_Irritate Stress_Sleep Stress_Tense
+Stress_Enjoy Stress_Freq Stress_Dead Stress_Accom
+Stress_Control Stress_Finan ;
+	TITLE 'Cronbach''s Alpha';
+RUN;
+
+/*Factor Analysis*/ 
+PROC FACTOR DATA= survey.sample n= 2 corr scree ev rotate = varimax method = prinit priors = smc;;
+	Var PhyA_Freq PhyA_Days PhyA_Stren PhyA_Mode
+PhyA_Pref PhyA_Imp Stress_Tired 
+Stress_Head Stress_Irritate Stress_Sleep Stress_Tense
+Stress_Enjoy Stress_Freq Stress_Dead Stress_Accom
+Stress_Control ; 
+RUN ;
+
+
+
+Reading the Macro
+data nnschool; *** create data set with marginal population percents for var1;
+nnschool= 1 ; percent= 40.5 ; output;
+nnschool= 2 ; percent= 19; output;
+nnschool= 3 ; percent= 40.5 ; output;
+run;
+
+data newgender;*** create data set with marginal population percents for var2;
+newgender= 1 ; percent= 43;output;
+newgender= 2 ; percent= 57;output;
+run;
+
+%INCLUDE "M:\UNT\TEACHING\EPID 5312\Fall 2018\LECTURE\Related to Lecture 7\raking_lecture7.sas" ;
+
+%rakinge( /* call enhanced raking */
+inds=sample ,
+outds=outds,
+inwt=, /* if unweighted sample, weight =1 will be assigned by macro */
+freqlist=,
+outwt=outwgt,
+byvar=,
+varlist=nnschool newgender,
+numvar=2,
+cntotal=100, /* any number here, 100 is most natural */
+trmprec=1,
+trmpct=0.005, /* macro will terminate based on this criterion */
+numiter=50,
+prdiag=Y
+);
+proc print data=outds;
+var nnschool newgender outwgt;
+run;
+
+proc freq data=outds; run;
