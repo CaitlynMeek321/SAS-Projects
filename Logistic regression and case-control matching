@@ -1,0 +1,207 @@
+LIBNAME lab 'C:\Users\Student\Desktop\Data Analysis\PNC Datasets.zip' ;
+/* This is everyone in both the 6th and 12th grade data sets */
+
+PROC SORT DATA= lab.pnc02 ; 
+	BY id ; 
+RUN ; 
+
+PROC SORT DATA= lab.pnc09; 
+	BY id ; 
+RUN ; 
+
+DATA lab.set ; 
+	MERGE lab.pnc02 (in=a) lab.pnc09(in= b) ; 
+	BY id ;
+	IF a= 1 and b= 1  ;
+RUN ; 
+
+/*This is everyone who has 6th grade, 12th grade, and demographic info */
+
+PROC SORT DATA= lab.pnc_demographics ; 
+	BY id ; 
+RUN ; 
+
+DATA lab.match ; 
+	MERGE lab.set (in=a) lab.pnc_demographics (in=b) ;
+	BY id ; 
+	IF a= 1 and b= 1 ; 
+RUN ; 
+
+DATA lab.final ; 
+	SET lab.match ; 
+
+ 	IF  alcyear1 in (1) then alc=0;
+	 IF  alcyear1 in (2,3,4,5,6,7) then alc=1;
+
+	IF Alcmon1= 1 THEN alcmon= 0 ; *did not drink ; 
+	ELSE IF alcmon1 gt 1 THEN alcmon= 1 ; *drank some amount ; 
+
+	IF hvyuse1= 1 THEN heavy_use= 0 ; *never been drunk ;
+	ELSE IF hvyuse1 gt 1 THEN heavy_use= 1 ; *was drunk ; 
+
+	IF maryear1= 1 THEN maryr= 0 ; *no weed ; 
+	ELSE IF maryear1 gt 1 THEN maryr= 1 ; *some weed ; 
+
+	IF marmon1 in (1) THEN marmon=0;*no weed ;
+ 	IF marmon1 in (2,3,4,5,6,7) THEN marmon=1; *some weed ; 
+
+	IF cigmon1= 1 THEN cigmon= 0 ;*did not smoke ; 
+	ELSE IF cigmon1= 2 THEN cigmon= 1 ; *smoked ; 
+
+	IF lunch1= 2 THEN freelunch= 0 ; *no free or reduced lunch ; 
+	ELSE IF lunch1= 1 THEN freelunch= 1 ; *gets free or reduced lunch ; 
+
+	IF frinum1 in (1) THEN frinum= 0 ; *no friends drink ; 
+	IF frinum1 in (2,3,4,5) THEN frinum= 1 ; *at least one friend drinks ; 
+
+
+*If frequencies for adudrink look weird try recoding 'some' into the few category ;
+	IF adudrnk1 in (1,2) THEN adudrink= 0 ; *few adults in neighborhood drink ; 
+	ELSE IF adudrnk1 in (3,4,5) THEN adudrink= 1 ; *most or all drink ;
+
+	IF Sad1= 1 THEN sad= 0 ; *never felt sad ; 
+	ELSE IF sad1 gt 1 THEN sad= 1 ; *felt sad ; 
+
+	IF detent1= 2 THEN detent1_3= 1 ; *had detention 1 to 3 times ; 
+	ELSE IF detent1 ne 2 THEN detent1_3= 0 ; *did not have detention 1 to 3 times ; 
+
+	IF detent1= 3 THEN detent4= 1 ; *had detention 4 or more times ; 
+	ELSE IF detent1 ne 3 THEN detent4= 0 ; *did not have detention 4 or more times ; 
+
+	agress= beat1 + pushed1 + kicked1 ; 
+
+RUN ; 
+
+*Here's all the people who have been incarcerated ; 
+data case;
+ set lab.final;
+ if incarc5= 1 ;
+run ;
+
+*Here's the people who have not been incarcerated ;
+data control ;
+ set lab.final ;
+ if incarc5= 0 ;
+run ;
+
+*This is the super mysterious macro ; 
+options nosource;
+
+%include "C:\Users\Student\Desktop\Data Analysis\match_cc macro2.sas";
+%match_cc (casedata = case,
+           controldata= control,
+           matchvar=gender1 race1 agress,
+	       matchval= 0 0 0,
+	       outmatch = psamatch,
+	       outnomatch = psanomatch,
+	       controlspercase=4,
+	      id =id);
+quit;
+
+
+
+
+
+/* IMPORTANT!!! SORT ALL YOUR DATA! */
+
+PROC SORT DATA= lab.final ; 
+	BY id ; 
+RUN ; 
+
+PROC SORT DATA= here.psamatch ; 
+	BY id ; 
+RUN ; 
+
+*This data set contains the case-control matched pairs that we conduct analysis on for table 1 and 2 ;
+ 
+DATA lab.matched ; 
+	MERGE here.psamatch (in= a ) lab.final (in= b) ; 
+	BY id ; 
+	IF a= 1 and b= 1 ; 
+RUN ; 
+
+/****** ANALYSIS********/
+
+/*TABLE 1*/
+
+*Past year alcohol use by incarceration status ; 
+PROC FREQ DATA= lab.matched ; 
+	TABLES alc*ccstat / NOROW NOCUM NOPERCENT CHISQ ; 
+RUN ; 
+*Past month alcohol use by incarceration status ;
+PROC FREQ DATA= lab.matched ; 
+	TABLES alcmon*ccstat / NOROW NOCUM NOPERCENT CHISQ ; 
+RUN ; 
+*Heavy alcohol use by incarceration status ;
+PROC FREQ DATA= lab.matched ; 
+	TABLES heavy_use*ccstat / NOROW NOCUM NOPERCENT CHISQ ; 
+RUN ; 
+*Past year marijuana use by incarceration status ; 
+PROC FREQ DATA= lab.matched ; 
+	TABLES maryr*ccstat / NOROW NOCUM NOPERCENT CHISQ ; 
+RUN ;
+*Past month marijuana use by incarceration status ; 
+PROC FREQ DATA= lab.matched ; 
+	TABLES marmon*ccstat / NOROW NOCUM NOPERCENT CHISQ ; 
+RUN ;
+*free lunch by incarceration status ; 
+PROC FREQ DATA= lab.matched ; 
+	TABLES freelunch*ccstat / NOROW NOCUM NOPERCENT CHISQ ; 
+RUN ;
+*Number of friends who drink alcohol by incarceration status ;
+PROC FREQ DATA= lab.matched ; 
+	TABLES frinum*ccstat / NOROW NOCUM NOPERCENT CHISQ ; 
+RUN ;
+*resort the data by case-control status so you can run proc means ; 
+PROC SORT DATA= lab.matched ; 
+	 BY ccstat ; 
+RUN ; 
+*Mean number of hours spent without an adult incarcerated vs not ;
+PROC MEANS DATA= lab.matched ; 
+	VAR noadult1 ; 
+	BY ccstat ;
+RUN ;
+*Family rules about alcohol by incarceration status ;
+PROC FREQ DATA= lab.matched ; 
+	TABLES famrula1*ccstat / NOROW NOCUM NOPERCENT CHISQ ; 
+RUN ;
+*Adults in the neighborhood who drink by incarceration status ;
+PROC FREQ DATA= lab.matched ; 
+	TABLES adudrink*ccstat / NOROW NOCUM NOPERCENT CHISQ  ; 
+RUN ;
+*Mean number of hours spent in church by incarceration status ;
+PROC MEANS DATA= lab.matched ; 
+	VAR church1 ; 
+	BY ccstat ;
+RUN ;
+PROC FREQ DATA= lab.matched ; 
+	TABLES church1*ccstat / NOROW NOCUM NOPERCENT CHISQ  ; 
+RUN ;
+*Sadness by incarceration status ; 
+PROC FREQ DATA= lab.matched ; 
+	TABLES sad*ccstat / NOROW NOCUM NOPERCENT CHISQ  ; 
+RUN ;
+*1-3 times of detention by incarceration status ; 
+PROC FREQ DATA= lab.matched ; 
+	TABLES detent1_3*ccstat / NOROW NOCUM NOPERCENT CHISQ  ; 
+RUN ;
+*4+ times of detention by incarceration status ;
+PROC FREQ DATA= lab.matched ; 
+	TABLES detent4*ccstat / NOROW NOCUM NOPERCENT CHISQ  ; 
+RUN ;
+*Mean age of incarcerated vs not ;
+PROC MEANS DATA= lab.matched ; 
+	VAR age1 ; 
+	BY ccstat ;
+RUN ;
+
+/*TABLE 2*/
+
+/** conditional logistic**/
+
+PROC LOGISTIC DATA=lab.matched  DESCENDING;
+ model incarc5= ALC ALCMON heavy_use maryr marmon freelunch frinum noadult1 famrula1 adudrink church1 sad detent1_3 detent4 Age1;
+STRATA setnumber;
+RUN;
+
+/*The distinguishing feature in terms of SAS syntax between requesting an unconditional and conditional logistic regression is the use of the STRATA statement for the conditional logistic regression. The STRATA statement in this example declares setnumber as the stratified (or conditioned) variable.*/
