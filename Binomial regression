@@ -1,0 +1,235 @@
+For data cleaning: 
+LIBNAME Thesis 'C:\Users\Student\Desktop\Thesis' ;
+ 
+/*Import both datasets*/
+PROC IMPORT 
+    DATAFILE= 'C:\Users\Student\OneDrive - University of North Texas Health Science Center\Dengue\Thesis\Arbovirus 2012-2016.xlsx'
+    
+    OUT= Thesis.First  
+    DBMS= xlsx REPLACE ;*First is the 2012-2016 data set ; 
+    GETNAMES= yes ;
+    RANGE= "Final_Arbovirus$A1:0";
+RUN ; 
+PROC IMPORT 
+    DATAFILE= 'C:\Users\Student\OneDrive - University of North Texas Health Science Center\Dengue\Thesis\DENGUE 2017-2019 (1).xlsx'
+    DBMS= xlsx
+    OUT= Thesis.Second1 ; *Second1 is the 2017-2019 data set ; 
+    GETNAMES= yes ;
+RUN ; 
+ 
+/*The Second dataset must include the varaibles Mon_Mun and Month in order to be merged to the First data set*/ 
+PROC SQL ; 
+    CREATE TABLE Thesis.NewSecond as 
+    SELECT ASSIGNED_MUNICIPALITY as NOM_MUN,
+    month(DATE_OF_INITIAL_SYMPTOMS_OR_SIGN)as Month,
+    year(DATE_OF_INITIAL_SYMPTOMS_OR_SIGN) as Year
+    FROM Thesis.Second1
+    ORDER BY NOM_MUN ;
+QUIT ;
+/*Create dengue case count variable!!!*/ 
+PROC SQL ; 
+    CREATE TABLE thesis.finally as 
+    SELECT DISTINCT *, count(NOM_MUN)as DENG
+    FROM Thesis.NewSecond 
+    GROUP BY NOM_MUN,month,year ;
+    ORDER BY NOM_MUN,year,month ; 
+QUIT ;
+PROC MEANS DATA= thesis.finally SUM ; 
+    VAR DENG; 
+RUN ;
+*there should only be 28,195 total cases of dengue in the 2017-2019 data set ; 
+ 
+/*Convert character variables to numeric and rename them in the 2012-2016 data*/ 
+DATA Thesis.First1 (DROP= lit1 hlthserv1 drtfloor1 toilet1 pipe1 sewage1 electric1 IOSB1 precip1 Max_precip1 Min_precip1 ) ;
+    SET Thesis.First (RENAME= 
+        (_Illiteracy= lit1
+         Population_without_health_servic= hlthserv1
+         Houses_with_floor_of_dirt= drtfloor1
+         Houses_without_toilet= toilet1
+         Houses_without__water_pipelines= pipe1
+         Houses_without_sewage= sewage1 
+         Houses_without_electricity= electric1
+         Index_of_Social_Backwardness= IOSB1
+         Mean_mm_day= precip1
+         Max_mm_day= Max_precip1
+         Min_mm_day= Min_precip1 )) ;
+ 
+    lit= input(lit1,10.) ; 
+    hlthserv= input(hlthserv1,10.) ; 
+    drtfloor= input(drtfloor1,10.) ; 
+    toilet= input(toilet1,10.) ; 
+    pipe= input(pipe1,10.) ; 
+    sewage= input(sewage1,10.) ; 
+    electric= input(electric1,10.) ;
+    IOSB= input(IOSB1,10.) ; 
+    precip= input(precip1, 10.);
+    Max_precip= input(Max_precip1, 10.);
+    Min_precip= input(Min_precip1, 10.) ;
+RUN ; 
+ 
+ 
+/*Merge 2012-2016 to the 2017-2019 data*/
+PROC SORT DATA= Thesis.First1 ; 
+    BY NOM_MUN month ; 
+RUN ; 
+DATA Thesis.Complete ;
+    MERGE Thesis.finally Thesis.First1 ; 
+    BY NOM_MUN month; 
+ 
+    IF Altitude ge -3 and Altitude lt 1094 THEN Alt_cat= 1 ; *create categorical altitude variable ;
+    ELSE IF Altitude ge 1094 and Altitude lt 2191 THEN Alt_cat= 2 ; 
+    ELSE IF Altitude ge 2191 and Altitude lt 3286 THEN Alt_cat= 3 ;
+ 
+    IF Precip ge 0 and Precip lt 13 THEN Precip_cat= 1 ; *create average precipitation categorical variable ;
+    ELSE IF Precip ge 13 and Precip lt 27 THEN precip_cat= 2 ; 
+    ELSE IF Precip ge 27 and precip lt 40 THEN precip_cat= 3 ; 
+ 
+    IF Max_precip ge 0 and Max_precip lt 190 THEN maxP_cat= 1 ; *create maximum precipitation categorical variable ;
+    ELSE IF Max_precip ge 190 and Max_precip lt 380 THEN maxP_cat= 2 ; 
+    ELSE IF Max_precip ge 380 and Max_precip lt 572 THEN maxP_cat= 3 ; 
+ 
+    IF Mean_Temp ge 15 and Mean_Temp lt 27 THEN temp_cat= 1 ; *categorical average temperature ;
+    ELSE IF Mean_Temp ge 27 and Mean_Temp lt 39 THEN temp_cat= 2 ; 
+    ELSE IF Mean_Temp ge 39 and Mean_Temp lt 50 THEN temp_cat= 3 ; 
+ 
+    IF Mean_Max_Temp ge 16 and Mean_Max_Temp lt 28 THEN maxT_cat= 1 ; *categorical maximum temperature ;
+    ELSE IF Mean_Max_Temp ge 28 and Mean_Max_Temp lt 40 THEN maxT_cat= 2 ; 
+    ELSE IF Mean_Max_Temp ge 40 and Mean_Max_Temp lt 52 THEN maxT_cat= 3 ; 
+ 
+    IF Mean_Min_Temp ge 14 and Mean_Min_Temp lt 26 THEN minT_cat= 1 ; *categorical minimum temperature ;
+    ELSE IF Mean_Min_Temp ge 26 and Mean_Min_Temp lt 38 THEN minT_cat= 2 ; 
+    ELSE IF Mean_Min_Temp ge 38 and Mean_Min_Temp lt 50 THEN minT_cat= 3 ; 
+RUN ; 
+/***********Thesis.Complete is the dataset containing all variables from 2012 to mid 2019**********/
+For analysis: 
+/*Check for over dispersion in main model to determine NB or Poisson regression*/ 
+PROC GENMOD DATA= Thesis.Complete ; 
+    MODEL DENG= lit hlthserv drtfloor toilet pipe sewage electric IOSB  /DIST= negbin SCALE= 0 NOSCALE ; 
+RUN ; 
+/*Check for over dispersion in the full model as well*/ 
+PROC GENMOD DATA= Thesis.Complete ; 
+    MODEL DENG= Altitude Max_precip Min_precip Precip Mean_Temp Mean_Min_Temp Mean_Max_Temp 
+    population lit hlthserv drtfloor toilet pipe sewage electric IOSB  /DIST= negbin SCALE= 0 NOSCALE ; 
+RUN ;
+/*Over dispersion is a problem in our dataset; use negative binomial distribution*/ 
+                    /*Model of interest*/
+PROC GENMOD DATA= Thesis.Complete ; 
+    MODEL DENG= lit hlthserv drtfloor toilet pipe sewage electric IOSB  /DIST= negbin  ; 
+RUN ; 
+                    /*Full model*/;
+PROC GENMOD DATA= Thesis.Complete ; 
+    MODEL DENG= Altitude Max_precip Min_precip Precip Mean_Temp Mean_Min_Temp Mean_Max_Temp 
+    population lit hlthserv drtfloor toilet pipe sewage electric IOSB  /DIST= negbin  ; 
+RUN ;
+/*Check for collinearity and omit social backwardness*/ 
+ODS PDF FILE= 'C:\Users\Student\Desktop\Thesis\collin.pdf' ;
+PROC REG DATA= Thesis.Complete ; 
+    MODEL DENG= Altitude Max_precip Min_precip Precip Mean_Temp Mean_Min_Temp Mean_Max_Temp 
+    population lit hlthserv drtfloor toilet pipe sewage electric / collin collinoint ;
+    TITLE "Collinearity Table" ;
+RUN ; 
+ODS PDF CLOSE ;
+
+/*Descritpive statistics*/ 
+PROC MEANS DATA= Thesis.Complete ; 
+    VAR Altitude Max_precip Min_precip Precip Mean_Temp Mean_Min_Temp Mean_Max_Temp 
+    population lit hlthserv drtfloor toilet pipe sewage electric ; 
+RUN ;
+PROC GENMOD DATA= Thesis.Complete ; 
+    CLASS Alt_cat maxP_cat Precip_cat temp_cat minT_cat maxT_cat /PARAM= ref REF= first;
+    MODEL DENG= Alt_cat maxP_cat Precip_cat temp_cat minT_cat maxT_cat 
+    population lit hlthserv drtfloor toilet pipe sewage electric  /LINK= log DIST= nb  ; 
+ 
+    ESTIMATE "RR of low vs med altitude" alt_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high altitude" alt_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med max precipitation" maxP_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high max precipitation" maxP_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med avg precipitation" Precip_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high avg precipitation" Precip_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med avg temp" temp_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high avg temp" temp_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med min temp" minT_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high min temp" minT_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med max temp" maxT_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high max temp" maxT_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of illiteracy" lit 1 ;
+    ESTIMATE "RR of health services" hlthserv 1 ; 
+    ESTIMATE "RR of dirt floor homes" drtfloor 1 ;
+    ESTIMATE "RR of indoor toilet" toilet 1 ; 
+    ESTIMATE "RR of indoor plumbing" pipe 1 ; 
+    ESTIMATE "RR of municipal sewage" sewage 1 ; 
+    ESTIMATE "RR of electricity in home" electric 1 ;
+ 
+RUN ;
+
+/* JK. Running it with categories instead*/ 
+ODS PDF file= "C:\Users\Student\Desktop\Thesis\catRESULTS.pdf" ;
+PROC GENMOD DATA= Thesis.Complete ; 
+    CLASS Alt_cat maxP_cat Precip_cat temp_cat minT_cat maxT_cat lit_cat hlth_cat drt_cat toilet_cat pipe_cat sewage_cat elect_cat/PARAM= ref REF= first;
+    MODEL DENG= Alt_cat maxP_cat Precip_cat temp_cat minT_cat maxT_cat 
+    population lit_cat hlth_cat hlth_cat drt_cat toilet_cat pipe_cat sewage_cat elect_cat/LINK= log DIST= nb  ; 
+ 
+    ESTIMATE "RR of low vs med altitude" alt_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high altitude" alt_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med max precipitation" maxP_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high max precipitation" maxP_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med avg precipitation" Precip_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high avg precipitation" Precip_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med avg temp" temp_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high avg temp" temp_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med min temp" minT_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high min temp" minT_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med max temp" maxT_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high max temp" maxT_cat 1 0 /exp ;
+ 
+ 
+    ESTIMATE "RR of low vs med literacy rate" lit_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high literacy rate" lit_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med health services" hlth_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high health services" hlth_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med dirt floors" drt_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high dirt floors" drt_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med toilets" toilet_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high toilets" toilet_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med pipes" pipe_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high pipes" pipe_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med sewage" sewage_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high sewage" sewage_cat 1 0 /exp ;
+ 
+    ESTIMATE "RR of low vs med electricity" elect_cat 0 1 /exp ;
+    ESTIMATE "RR of low vs high electricity" elect_cat 1 0 /exp ;
+ 
+RUN ; 
+ODS PDF CLOSE ;
+
+
+/*Model fit and comparisons*/ 
+PROC GENMOD DATA= Thesis.Complete ; 
+    CLASS Alt_cat maxP_cat Precip_cat temp_cat minT_cat maxT_cat lit_cat hlth_cat drt_cat toilet_cat pipe_cat sewage_cat elect_cat/PARAM= ref REF= first;
+    MODEL DENG= Alt_cat maxP_cat Precip_cat temp_cat minT_cat maxT_cat 
+    population lit_cat hlth_cat hlth_cat drt_cat toilet_cat pipe_cat sewage_cat elect_cat/type3 DIST= nb  ; 
+RUN ; 
+PROC GENMOD DATA= Thesis.Complete ; 
+    CLASS lit_cat hlth_cat drt_cat toilet_cat pipe_cat sewage_cat elect_cat/PARAM= ref REF= first;
+    MODEL DENG= lit_cat hlth_cat hlth_cat drt_cat toilet_cat pipe_cat sewage_cat elect_cat/type3 DIST= nb  ; 
+RUN ; 
+PROC GENMOD DATA= Thesis.Complete ; 
+    CLASS Alt_cat maxP_cat Precip_cat temp_cat minT_cat maxT_cat /PARAM= ref REF= first;
+    MODEL DENG= Alt_cat maxP_cat Precip_cat temp_cat minT_cat maxT_cat /type3 DIST= nb  ; 
+RUN ;
